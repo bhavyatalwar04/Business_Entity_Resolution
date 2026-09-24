@@ -10,7 +10,6 @@ import time
 import numpy as np
 import yaml
 
-from src.blocking import token_block, union_candidates
 from src.evaluate import is_val
 from src.io_utils import load_ground_truth
 from src.run import art_dir, load_normalized
@@ -50,19 +49,15 @@ def main():
     gold_pairs = pd.DataFrame(rows, columns=["s1_id", "pool_id"])
     print(f"{len(q)} S1, {len(gold_pairs)} true pairs", flush=True)
 
-    parts = []
-    tb = token_block(q, pool, k=args.k, max_df=args.max_df)
-    print(f"token_block done: {len(tb)} pairs [{time.time() - t0:.0f}s]", flush=True)
-    parts.append(tb)
+    from src.blocking import block_all
+    e_s1 = e_pool = None
     if args.emb:
-        from src.embed import embed_block
         d = art_dir(cfg, "train")
-        e_s1 = np.load(os.path.join(d, "emb_s1.npy"), mmap_mode="r")[samp]
-        e_pool = np.load(os.path.join(d, "emb_pool.npy"))
-        eb = embed_block(q, pool, np.ascontiguousarray(e_s1), e_pool, k=args.k)
-        print(f"embed_block done [{time.time() - t0:.0f}s]", flush=True)
-        parts.append(eb)
-    cands = union_candidates(parts)
+        e_s1 = np.ascontiguousarray(np.load(os.path.join(d, "emb_s1.npy"), mmap_mode="r")[samp])
+        e_pool = np.load(os.path.join(d, "emb_pool.npy"), mmap_mode="r")
+    cands = block_all(q, pool, e_s1, e_pool, token_k=args.k, token_max_df=args.max_df, embed_k=args.k, cap=None)
+    parts = ["tok"] + (["emb"] if args.emb else [])
+    print(f"blocking done: {len(cands):,} pairs [{time.time() - t0:.0f}s]", flush=True)
     cands["s1_id"] = q["entity_id"].to_numpy()[cands["s1_idx"].to_numpy()]
     cands["pool_id"] = pool["entity_id"].to_numpy()[cands["pool_idx"].to_numpy()]
     ks = [5, 10, 20, 30, 50]

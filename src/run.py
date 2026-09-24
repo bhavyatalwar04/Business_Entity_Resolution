@@ -105,33 +105,23 @@ def query_index(cfg, split, s1):
 def stage_block(cfg, split):
     """Token + embedding blocking for the query S1s against the full pool -> cands.parquet."""
     import numpy as np
-    from src.blocking import token_block, union_candidates
+    from src.blocking import block_all
     t0 = time.time()
     d = art_dir(cfg, split)
     b = cfg["blocking"]
     s1, pool = load_normalized(cfg, split, columns=["entity_id", "name_skel", "name_alt_skel", "name_ns",
                                                     "addr_clean", "country_norm"])
     qi = np.arange(len(s1))  # block every S1; the train sample is selected in stage_features
-    q = s1
-    tb = token_block(q, pool, k=b["token_top_k"], max_df=b["token_max_df"])
-    print(f"[block:{split}] token pass {len(tb):,} pairs [{time.time() - t0:.0f}s]", flush=True)
-    parts = [tb]
+    e_s1 = e_pool = None
     emb_path = os.path.join(d, "emb_pool.npy")
     if os.path.exists(emb_path):
-        from src.embed import embed_block
         e_s1 = np.load(os.path.join(d, "emb_s1.npy"), mmap_mode="r")
         e_pool = np.load(emb_path, mmap_mode="r")
-        eb = embed_block(q, pool, np.ascontiguousarray(e_s1[qi]), e_pool, k=b["embed_top_k"])
-        del e_pool
-        print(f"[block:{split}] embedding pass {len(eb):,} pairs [{time.time() - t0:.0f}s]", flush=True)
-        parts.append(eb)
     else:
         print(f"[block:{split}] no embeddings cached - token pass only", flush=True)
-    cands = union_candidates(parts, max_per_s1=b["max_candidates"])
-    cands["s1_idx"] = qi[cands["s1_idx"].to_numpy()]
-    cands["s1_id"] = s1["entity_id"].to_numpy()[cands["s1_idx"].to_numpy()]
-    cands["pool_id"] = pool["entity_id"].to_numpy()[cands["pool_idx"].to_numpy()]
-    cands.to_parquet(os.path.join(d, "cands.parquet"), index=False)
+    cands = block_all(s1, pool, e_s1, e_pool, token_k=b["token_top_k"], token_max_df=b["token_max_df"],
+                      embed_k=b["embed_top_k"], cap=b["max_candidates"])
+    cands.to_parquet(os.path.join(d, "cands.parquet"), index=False)  # integer indices only
     sample = query_index(cfg, split, s1)
     pd.DataFrame({"s1_idx": sample}).to_parquet(os.path.join(d, "query_idx.parquet"), index=False)
     print(f"[block:{split}] {len(cands):,} candidates, {len(cands) / len(qi):.1f} per S1 [{time.time() - t0:.0f}s]")
@@ -139,9 +129,20 @@ def stage_block(cfg, split):
         from src.evaluate import blocking_recall, oracle_f05
         from src.io_utils import load_ground_truth
         gold = load_ground_truth(cfg["paths"]["data_dir"])
-        ids = s1["entity_id"].to_numpy()[sample].tolist()
-        cs = cands.groupby("s1_id")["pool_id"].apply(list).to_dict()
-        print(f"[block:train] recall {blocking_recall(cs, gold, ids):.4f} | oracle F0.5 {oracle_f05(cs, gold, ids):.4f}")
+        sub = cands[np.isin(cands["s1_idx"].to_numpy(), sample)]
+        s1_ids, pool_ids = s1["entity_id"].to_numpy(), pool["entity_id"].to_numpy()
+        cs = {}
+        for a, p in zip(s1_ids[sub["s1_idx"].to_numpy()], pool_ids[sub["pool_idx"].to_numpy()]):
+            cs.setdefault(a, []).append(p)
+        ids = s1_ids[sample].tolist()
+        for col in ("tok_rank", "emb_rank"):
+            if col in sub:
+                cs_p = {}
+                m = sub[col].to_numpy() < 999
+                for a, p in zip(s1_ids[sub["s1_idx"].to_numpy()[m]], pool_ids[sub["pool_idx"].to_numpy()[m]]):
+                    cs_p.setdefault(a, []).append(p)
+                print(f"[block:train] {col[:3]} pass alone: recall {blocking_recall(cs_p, gold, ids):.4f}")
+        print(f"[block:train] union: recall {blocking_recall(cs, gold, ids):.4f} | oracle F0.5 {oracle_f05(cs, gold, ids):.4f}")
 
 
 def stage_features(cfg, split):
@@ -170,8 +171,8 @@ def stage_features(cfg, split):
         part = cands.loc[m]
         f = build_pair_features(part, s1, pool).reset_index(drop=True)
         f = pd.concat([f, ctx.loc[m].reset_index(drop=True)], axis=1).astype(np.float32)
-        f.insert(0, "s1_id", part["s1_id"].to_numpy())
-        f.insert(1, "pool_id", part["pool_id"].to_numpy())
+        f.insert(0, "s1_id", s1["entity_id"].to_numpy()[part["s1_idx"].to_numpy()])
+        f.insert(1, "pool_id", pool["entity_id"].to_numpy()[part["pool_idx"].to_numpy()])
         f.to_parquet(os.path.join(fd, f"part_{n:03d}.parquet"), index=False)
         print(f"[features:{split}] part {n}: {len(f):,} rows, {f.shape[1] - 2} features [{time.time() - t0:.0f}s]", flush=True)
 
@@ -243,6 +244,8 @@ def stage_decide(cfg, split):
     import json
     import subprocess
     import sys
+
+    import numpy as np
     from src.decide import decide
     from src.io_utils import write_tsv
     if split != "test":
@@ -255,8 +258,18 @@ def stage_decide(cfg, split):
     s1_ids = pd.read_parquet(os.path.join(d, "s1.parquet"), columns=["entity_id"])["entity_id"].tolist()
     probs = pd.read_parquet(os.path.join(d, "probs.parquet"))
     matches = decide(probs, s1_ids, params)
-    cands = pd.read_parquet(os.path.join(d, "cands.parquet"), columns=["s1_id", "pool_id"])
-    cand_lists = cands.groupby("s1_id")["pool_id"].apply(list).to_dict()
+    cands = pd.read_parquet(os.path.join(d, "cands.parquet"), columns=["s1_idx", "pool_idx"])
+    pool_ids = np.concatenate([pd.read_parquet(os.path.join(d, f"s{k}.parquet"), columns=["entity_id"])["entity_id"].to_numpy()
+                               for k in (2, 3)])
+    s1_arr = np.asarray(s1_ids)
+    cand_lists = {}
+    for a, p in zip(s1_arr[cands["s1_idx"].to_numpy()], pool_ids[cands["pool_idx"].to_numpy()]):
+        cand_lists.setdefault(a, []).append(p)
+    # the matcher can only choose candidates: enforce matches subset of candidates
+    for s_id, ms in matches.items():
+        if ms:
+            allowed = set(cand_lists.get(s_id, ()))
+            matches[s_id] = [m for m in ms if m in allowed]
     out = cfg["paths"]["output_dir"]
     write_tsv(s1_ids, matches, os.path.join(out, "matching_results.tsv"), "matched_entity_ids")
     write_tsv(s1_ids, cand_lists, os.path.join(out, "candidate_pairs.tsv"), "candidate_entity_ids")

@@ -46,7 +46,7 @@ def encode(texts, model_name="intfloat/multilingual-e5-small", batch_size=512, d
     return out
 
 
-def knn(queries, base, k=30, q_chunk=2048, b_chunk=1_000_000, device="cuda", base_rows=None):
+def knn(queries, base, k=30, q_chunk=1024, b_chunk=1_000_000, device="cuda", base_rows=None):
     """Exact top-k inner-product neighbours of each query row among base[base_rows] (float16;
     base may be a disk memmap - only one chunk is in RAM at a time).
     Returns (idx int64 [nq, k] - positions within base_rows, sim float32 [nq, k])."""
@@ -71,6 +71,7 @@ def knn(queries, base, k=30, q_chunk=2048, b_chunk=1_000_000, device="cuda", bas
             best_i[qs:qs + q_chunk] = torch.gather(ci, 1, top.indices)
         del B
         torch.cuda.empty_cache()
+        print(f"    knn: pool chunk {min(bs + b_chunk, n_base):,}/{n_base:,} done for {nq:,} queries", flush=True)
     return best_i.numpy(), best_s.numpy()
 
 
