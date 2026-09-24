@@ -1,0 +1,39 @@
+# All tunable values live here: k values, thresholds, model names, seeds.
+seed: 42
+
+paths:
+  data_dir: dataset
+  artefacts_dir: artefacts
+  output_dir: output
+  logs_dir: logs
+
+validation:
+  n_folds: 5            # GroupKFold by S1 entity
+  holdout_frac: 0.2
+
+blocking:
+  tfidf_ngram_range: [3, 5]
+  tfidf_top_k: 30
+  embed_model: intfloat/multilingual-e5-base
+  embed_top_k: 30
+  rare_token_max_df: 0.01
+  max_candidates: 50
+
+cross_encoder:
+  model_name: xlm-roberta-base
+  max_length: 128
+  epochs: 2
+  batch_size: 32
+  lr: 2.0e-5
+
+lgbm:
+  num_leaves: 63
+  learning_rate: 0.05
+  n_estimators: 1000
+  early_stopping_rounds: 50
+
+decide:
+  one_to_one: true
+  s2_s3_boost: 0.0
+  p_none_weight: 1.0
+  min_prob: 0.0

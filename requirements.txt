@@ -1,0 +1,14 @@
+# Pin exact versions once the environment is finalised on Day 1.
+pandas
+numpy
+scikit-learn
+pyarrow
+pyyaml
+rapidfuzz
+unidecode
+faiss-cpu
+lightgbm
+sentence-transformers
+transformers
+torch
+streamlit

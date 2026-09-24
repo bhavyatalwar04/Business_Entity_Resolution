@@ -1,0 +1,32 @@
+# Data and large artefacts are never committed (shared via Drive instead)
+dataset/**
+!dataset/.gitkeep
+artefacts/**
+!artefacts/.gitkeep
+output/*.tsv
+*.zip
+
+# Model checkpoints / caches
+*.pt
+*.bin
+*.safetensors
+*.ckpt
+*.npy
+*.parquet
+.cache/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+
+# Raw student resource download (contains data)
+6ab10eb3b23ba_student_resource/
+__MACOSX/
