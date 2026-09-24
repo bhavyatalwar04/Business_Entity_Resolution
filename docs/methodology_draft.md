@@ -29,3 +29,10 @@
 | experiment | blocking recall | oracle F0.5 | OOF F0.5 |
 |---|---|---|---|
 | token pass only, 5k S1 smoke | 0.833 | 0.927 | 0.880 |
+| token + fine-tuned embedding union (cap 25), 200k S1, stage 1 LightGBM | 0.9922 | 0.9976 | 0.9685 |
+| + stage 2 (per-S1 probability context) | 0.9922 | 0.9976 | **0.9699** |
+
+Decision tuned on OOF: one-to-one + expected-F0.5 prefix selection (alpha = 1.5).
+Top stage-1 features: cand_rank_emb_score, emb_score, cand_gap_emb_score, num_conflict, num_jac,
+n_clean_ratio, a_tset, s1_gap_emb_score — i.e. embedding similarity and candidate competition dominate,
+with house-number conflict as the strongest string signal.
