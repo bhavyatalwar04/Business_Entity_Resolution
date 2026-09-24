@@ -1,22 +1,97 @@
-"""Decision layer: pair probabilities -> final match set per S1 entity."""
+"""Decision layer: pair probabilities -> final match set per S1 entity.
+
+1. one_to_one : each S2/S3 record goes to at most one S1 (verified in training ground truth:
+                no S2/S3 id ever appears under two S1s).
+2. set choice : per S1, either
+     'thresh' - keep candidates with p >= t and p >= r * best_p of that S1, or
+     'expf'   - keep the sorted prefix (possibly empty) maximising approximate expected F0.5,
+                with `alpha` scaling the value of predicting nothing.
+Parameters are tuned on out-of-fold / validation probabilities, never on the leaderboard.
+"""
+import itertools
+
+import numpy as np
+
+from src.evaluate import f05
 
 
-def one_to_one(pair_probs):
-    """Keep each S2/S3 record only under the S1 with its highest probability."""
-    raise NotImplementedError
+def one_to_one(df, prob_col="prob"):
+    """Keep each S2/S3 record only under the S1 with its highest probability (ties: first)."""
+    df = df.sort_values(prob_col, ascending=False)
+    keep = ~df.duplicated(subset="pool_id", keep="first")
+    return df[keep]
 
 
-def s2_s3_boost(pair_probs, cfg):
-    """Boost S3 candidates that look like an already-confident S2 match (and vice versa)."""
-    raise NotImplementedError
+def group_sorted(df, prob_col="prob"):
+    """{s1_id: (ids array, probs array)} with probabilities sorted high -> low."""
+    df = df.sort_values(["s1_id", prob_col], ascending=[True, False])
+    s1 = df["s1_id"].to_numpy()
+    ids = df["pool_id"].to_numpy()
+    p = df[prob_col].to_numpy()
+    out = {}
+    if len(df) == 0:
+        return out
+    cut = np.flatnonzero(s1[1:] != s1[:-1]) + 1
+    for a, b in zip(np.r_[0, cut], np.r_[cut, len(df)]):
+        out[s1[a]] = (ids[a:b], p[a:b])
+    return out
 
 
-def choose_set(cands, p_none_weight=1.0):
-    """cands: [(entity_id, prob)] sorted desc. Return the prefix (possibly empty)
-    that maximises expected F0.5."""
-    raise NotImplementedError
+def choose_thresh(ids, probs, t, r):
+    """Absolute threshold t plus relative-to-best ratio r."""
+    if len(probs) == 0 or probs[0] < t:
+        return []
+    return list(ids[(probs >= t) & (probs >= r * probs[0])])
 
 
-def decide(pair_probs, cfg):
-    """Probabilities -> {s1_id: [matched ids]}."""
-    raise NotImplementedError
+def choose_set(ids, probs, alpha=1.0):
+    """Sorted prefix (possibly empty) maximising approximate expected F0.5."""
+    if len(probs) == 0:
+        return []
+    best_k, best = 0, float(np.prod(1.0 - probs)) * alpha
+    exp_gold, exp_tp = probs.sum(), 0.0
+    for k, p in enumerate(probs, 1):
+        exp_tp += p
+        score = 1.25 * exp_tp / (0.25 * exp_gold + k)
+        if score > best:
+            best, best_k = score, k
+    return list(ids[:best_k])
+
+
+def apply_params(grouped, s1_ids, params):
+    """{s1_id: [matched ids]} for every S1 under the given parameters."""
+    out = {}
+    for s in s1_ids:
+        if s not in grouped:
+            out[s] = []
+            continue
+        ids, probs = grouped[s]
+        if params["method"] == "thresh":
+            out[s] = choose_thresh(ids, probs, params["t"], params["r"])
+        else:
+            out[s] = choose_set(ids, probs, params["alpha"])
+    return out
+
+
+def tune(df, gold, s1_ids, verbose=True):
+    """Grid-search decision parameters (with and without one-to-one); returns (params, score)."""
+    best, best_score = None, -1.0
+    for o2o in (True, False):
+        grouped = group_sorted(one_to_one(df) if o2o else df)
+        grid = [{"method": "thresh", "t": float(t), "r": r}
+                for t, r in itertools.product(np.round(np.arange(0.10, 0.96, 0.05), 2), [0.0, 0.2, 0.4, 0.6])]
+        grid += [{"method": "expf", "alpha": a} for a in (0.5, 1.0, 1.5, 2.0, 3.0, 5.0)]
+        for params in grid:
+            preds = apply_params(grouped, s1_ids, params)
+            score = float(np.mean([f05(preds[i], gold.get(i, ())) for i in s1_ids]))
+            if score > best_score:
+                best, best_score = dict(params, one_to_one=o2o), score
+    if verbose:
+        print(f"  decision params {best} -> macro F0.5 {best_score:.4f}", flush=True)
+    return best, best_score
+
+
+def decide(df, s1_ids, params):
+    """Probabilities DataFrame(s1_id, pool_id, prob) -> {s1_id: [matched ids]}."""
+    work = one_to_one(df) if params.get("one_to_one", True) else df
+    return apply_params(group_sorted(work), s1_ids, params)

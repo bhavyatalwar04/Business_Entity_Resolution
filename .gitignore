@@ -30,3 +30,9 @@ Thumbs.db
 # Raw student resource download (contains data)
 6ab10eb3b23ba_student_resource/
 __MACOSX/
+
+# Local copy of the student resource zip
+student_resource/
+
+# Local logs of long runs
+logs/*.log

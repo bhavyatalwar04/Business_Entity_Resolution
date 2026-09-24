@@ -14,7 +14,8 @@ validation:
 blocking:
   tfidf_ngram_range: [3, 5]
   tfidf_top_k: 30
-  embed_model: intfloat/multilingual-e5-base
+  embed_model: intfloat/multilingual-e5-small
+  embed_model_path: null     # fine-tuned checkpoint dir overrides embed_model when set
   embed_top_k: 30
   rare_token_max_df: 0.01
   max_candidates: 50
