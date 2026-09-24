@@ -45,7 +45,8 @@ ADDR_CANON = {
     "near": "nr", "opposite": "opp", "market": "mkt", "nagar": "ngr", "sector": "sec",
     "extension": "extn", "ext": "extn", "number": "no", "num": "no", "district": "dist",
     "chemin": "ch", "che": "ch", "impasse": "imp", "allee": "all", "faubourg": "fg", "fbg": "fg",
-    "route": "rte", "cross": "crs", "main": "mn", "unit": "ste", "house": "hse", "city": "",
+    "route": "rte", "rue": "r", "quai": "qu", "cite": "cte", "residence": "res", "resid": "res",
+    "batiment": "bat", "bt": "bat", "lieu": "", "dit": "", "cedex": "", "cross": "crs", "main": "mn", "unit": "ste", "house": "hse", "city": "",
     "town": "", "cp": "", "null": "", "po": "", "box": "", "first": "1st", "second": "2nd",
     "third": "3rd", "fourth": "4th",
 }

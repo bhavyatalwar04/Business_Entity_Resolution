@@ -15,29 +15,20 @@ import pandas as pd
 import scipy.sparse as sp
 
 
-def _record_tokens(df):
-    """Token list per record: 'n:' name-skeleton tokens (+ alias), 'a:' address tokens."""
-    out = []
-    for skel, alt_skel, ns, addr in zip(df["name_skel"], df["name_alt_skel"], df["name_ns"], df["addr_clean"]):
-        toks = {"n:" + t for t in skel.split() if len(t) > 1}
-        toks.update("n:" + t for t in alt_skel.split() if len(t) > 1)
-        if len(ns) >= 6:
-            toks.add("s:" + ns)  # whole name without spaces: catches 'urologystrategichealth'
-        toks.update("a:" + t for t in addr.split())
-        out.append(list(toks))
-    return out
+def _prefixed(col, prefix):
+    """'ab cd' -> 'P:ab P:cd' for a whole string column (empty stays empty)."""
+    col = col.fillna("")
+    out = prefix + col.str.replace(" ", " " + prefix, regex=False)
+    return out.where(col.str.len() > 0, "")
 
 
-def _tfidf_matrix(tok_lists, vocab):
-    """Binary token matrix restricted to `vocab` (token -> column)."""
-    indptr, indices = [0], []
-    for toks in tok_lists:
-        cols = [vocab[t] for t in toks if t in vocab]
-        indices.extend(cols)
-        indptr.append(len(indices))
-    data = np.ones(len(indices), dtype=np.float32)
-    return sp.csr_matrix((data, np.array(indices, dtype=np.int32), np.array(indptr, dtype=np.int64)),
-                         shape=(len(tok_lists), len(vocab)))
+def token_docs(df):
+    """One space-separated token document per record:
+    'n:' name-skeleton tokens (+ alias), 's:' whole no-space name, 'a:' address tokens."""
+    ns = df["name_ns"].fillna("")
+    s_tok = ("s:" + ns).where(ns.str.len() >= 6, "")
+    return (_prefixed(df["name_skel"], "n:") + " " + _prefixed(df["name_alt_skel"], "n:") + " "
+            + s_tok + " " + _prefixed(df["addr_clean"], "a:")).tolist()
 
 
 def _topk_rows(S, k):
@@ -65,39 +56,35 @@ def token_block(s1, pool, k=30, max_df=3000, chunk=20000, verbose=False):
     """Pass C: IDF-weighted rare-token overlap within each country; top-k pool records per S1.
 
     Tokens with document frequency above `max_df` (in the country's pool) are ignored - they
-    make the sparse product dense and carry little identity signal. Scores are cosine-like
-    (IDF-weighted overlap normalised by both records' IDF mass)."""
+    make the sparse product dense and carry little identity signal. Rows are IDF-weighted and
+    L2-normalised, so the score is a cosine over rare tokens."""
+    from sklearn.feature_extraction.text import CountVectorizer
     frames = []
-    s1_tok, pool_tok = _record_tokens(s1), _record_tokens(pool)
     s1_c, pool_c = s1["country_norm"].to_numpy(), pool["country_norm"].to_numpy()
     for country in pd.unique(s1_c):
         si = np.flatnonzero(s1_c == country)
         pi = np.flatnonzero(pool_c == country)
         if len(pi) == 0:
-            pi = np.arange(len(pool))  # unseen label on the pool side: block against everything
-        df_count = {}
-        for i in pi:
-            for t in pool_tok[i]:
-                df_count[t] = df_count.get(t, 0) + 1
-        vocab = {t: j for j, t in enumerate(t for t, c in df_count.items() if c <= max_df)}
-        idf = np.zeros(len(vocab), dtype=np.float32)
-        for t, j in vocab.items():
-            idf[j] = np.log(1 + len(pi) / df_count[t])
-        B = _tfidf_matrix([pool_tok[i] for i in pi], vocab)
-        A = _tfidf_matrix([s1_tok[i] for i in si], vocab)
-        W = sp.diags(idf)
-        A, B = (A @ W).tocsr(), (B @ W).tocsr()
-        a_norm = np.sqrt(np.asarray(A.multiply(A).sum(1)).ravel()) + 1e-6
-        b_norm = np.sqrt(np.asarray(B.multiply(B).sum(1)).ravel()) + 1e-6
-        A = sp.diags(1 / a_norm) @ A
-        B = (sp.diags(1 / b_norm) @ B).T.tocsr()
-        # weight by idf again on one side so a shared rare token counts more than a common one
+            pi = np.arange(len(pool))  # label unseen on the pool side: block against everything
+        vec = CountVectorizer(analyzer=str.split, binary=True, dtype=np.float32)
+        B = vec.fit_transform(token_docs(pool.iloc[pi])).tocsc()
+        df_count = np.diff(B.indptr)
+        keep = np.flatnonzero((df_count <= max_df) & (df_count > 0))
+        idf = np.log1p(len(pi) / df_count[keep]).astype(np.float32)
+        B = (B[:, keep] @ sp.diags(idf)).tocsr()
+        A = vec.transform(token_docs(s1.iloc[si])).tocsc()[:, keep]
+        A = (A @ sp.diags(idf)).tocsr()
+        A = sp.diags(1 / (np.sqrt(np.asarray(A.multiply(A).sum(1)).ravel()) + 1e-6)) @ A
+        B = sp.diags(1 / (np.sqrt(np.asarray(B.multiply(B).sum(1)).ravel()) + 1e-6)) @ B
+        BT = B.T.tocsr().astype(np.float32)
+        A = A.tocsr().astype(np.float32)
+        del B
         for start in range(0, A.shape[0], chunk):
-            S = (A[start:start + chunk] @ B).tocsr()
+            S = (A[start:start + chunk] @ BT).tocsr()
             r, c, v = _topk_rows(S, k)
             frames.append(pd.DataFrame({"s1_idx": si[start + r], "pool_idx": pi[c], "tok_score": v}))
             if verbose:
-                print(f"    token_block[{country}] {start + A[start:start + chunk].shape[0]}/{A.shape[0]}", flush=True)
+                print(f"    token_block[{country}] {min(start + chunk, A.shape[0]):,}/{A.shape[0]:,}", flush=True)
     out = pd.concat(frames, ignore_index=True)
     out["tok_rank"] = out.groupby("s1_idx")["tok_score"].rank(ascending=False, method="first").astype(np.int16)
     return out

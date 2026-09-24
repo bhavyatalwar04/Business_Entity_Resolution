@@ -14,14 +14,24 @@ def record_text(df):
     return ("query: " + df["name_clean"] + " | " + df["addr_clean"]).tolist()
 
 
-def encode(texts, model_name="intfloat/multilingual-e5-small", batch_size=512, device="cuda", max_len=64):
-    """Encode texts to L2-normalised float16 vectors (numpy). Texts are length-sorted for speed."""
+def encode(texts, model_name="intfloat/multilingual-e5-small", batch_size=512, device="cuda", max_len=64,
+           out_path=None):
+    """Encode texts to L2-normalised float16 vectors. Texts are length-sorted for speed.
+    With `out_path`, vectors are streamed into a .npy memmap on disk instead of RAM."""
     from sentence_transformers import SentenceTransformer
     model = SentenceTransformer(model_name, device=device)
     model.max_seq_length = max_len
     model.half()
-    order = np.argsort([len(t) for t in texts])
-    out = np.empty((len(texts), model.get_sentence_embedding_dimension()), dtype=np.float16)
+    # length-sort inside contiguous 1M-row windows: most of the padding saving, while every
+    # window's writes land in one contiguous block of the output (fast with a disk memmap)
+    lens = np.array([len(t) for t in texts])
+    win = 1_000_000
+    order = np.concatenate([w + np.argsort(lens[w:w + win], kind="stable") for w in range(0, len(texts), win)])         if len(texts) else np.array([], dtype=np.int64)
+    shape = (len(texts), model.get_embedding_dimension())
+    if out_path:
+        out = np.lib.format.open_memmap(out_path, mode="w+", dtype=np.float16, shape=shape)
+    else:
+        out = np.empty(shape, dtype=np.float16)
     step = 200_000
     for s in range(0, len(texts), step):
         idx = order[s:s + step]
@@ -31,18 +41,24 @@ def encode(texts, model_name="intfloat/multilingual-e5-small", batch_size=512, d
         print(f"    encoded {min(s + step, len(texts)):,}/{len(texts):,}", flush=True)
     del model
     torch.cuda.empty_cache()
+    if out_path:
+        out.flush()
     return out
 
 
-def knn(queries, base, k=30, q_chunk=2048, b_chunk=1_000_000, device="cuda"):
-    """Exact top-k inner-product neighbours of each query row in `base` (both float16 numpy).
-    Returns (idx int64 [nq, k], sim float32 [nq, k])."""
+def knn(queries, base, k=30, q_chunk=2048, b_chunk=1_000_000, device="cuda", base_rows=None):
+    """Exact top-k inner-product neighbours of each query row among base[base_rows] (float16;
+    base may be a disk memmap - only one chunk is in RAM at a time).
+    Returns (idx int64 [nq, k] - positions within base_rows, sim float32 [nq, k])."""
     nq = len(queries)
-    k = min(k, len(base))
+    if base_rows is None:
+        base_rows = np.arange(len(base))
+    n_base = len(base_rows)
+    k = min(k, n_base)
     best_s = torch.full((nq, k), -2.0, dtype=torch.float32)
     best_i = torch.zeros((nq, k), dtype=torch.int64)
-    for bs in range(0, len(base), b_chunk):
-        B = torch.from_numpy(base[bs:bs + b_chunk]).to(device)
+    for bs in range(0, n_base, b_chunk):
+        B = torch.from_numpy(np.ascontiguousarray(base[base_rows[bs:bs + b_chunk]])).to(device)
         for qs in range(0, nq, q_chunk):
             Q = torch.from_numpy(queries[qs:qs + q_chunk]).to(device)
             S = Q @ B.T
@@ -67,7 +83,7 @@ def embed_block(s1, pool, s1_emb, pool_emb, k=30):
         pi = np.flatnonzero(pool_c == country)
         if len(pi) == 0:
             pi = np.arange(len(pool))
-        idx, sim = knn(s1_emb[si], pool_emb[pi], k)
+        idx, sim = knn(np.ascontiguousarray(s1_emb[si]), pool_emb, k, base_rows=pi)
         kk = idx.shape[1]
         frames.append(pd.DataFrame({
             "s1_idx": np.repeat(si, kk), "pool_idx": pi[idx.ravel()], "emb_score": sim.ravel(),
