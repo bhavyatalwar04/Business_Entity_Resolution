@@ -184,7 +184,11 @@ data, APIs, geocoding or lookups are used; all normalisation rules are hand-writ
 |---|---|---|---|
 | Token pass only, 5k S1 (smoke) | 0.833 | 0.927 | 0.880 |
 | Token ∪ fine-tuned e5 (cap 25), stage 1, 200k S1 | 0.9922 | 0.9976 | 0.9685 |
-| + stage 2 probability context (**submitted v1**) | 0.9922 | 0.9976 | **0.9699** |
+| + stage 2 probability context (submitted v1) | 0.9922 | 0.9976 | 0.9699 |
+| same, LightGBM trained on 500k S1, lr 0.1 (**v2**) | 0.9922 | 0.9976 | **0.9719** |
+
+Learning curve (stage 1, fixed 40k-S1 validation): 20k → 0.9617, 40k → 0.9640, 80k → 0.9661,
+160k → 0.9683 training S1 — about +0.002 per doubling with no plateau, which motivated v2.
 
 ---
 
