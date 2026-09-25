@@ -198,6 +198,45 @@ def load_features(cfg, split):
     return pd.concat([pd.read_parquet(os.path.join(fd, p)) for p in sorted(os.listdir(fd))], ignore_index=True)
 
 
+def load_feature_matrix(cfg, split, s1_index=None, pool_index=None):
+    """Cached feature parts -> (float32 matrix, id frame, feature names), filling a preallocated array
+    part by part so peak memory stays near one copy of the features. With s1_index / pool_index
+    (pd.Index of entity ids) the id frame holds integer s1_idx / pool_idx instead of strings."""
+    import numpy as np
+    import pyarrow.parquet as pq
+    from src.ranker import ID_COLS
+    fd = os.path.join(art_dir(cfg, split), "feats")
+    parts = [os.path.join(fd, p) for p in sorted(os.listdir(fd))]
+    n = sum(pq.ParquetFile(p).metadata.num_rows for p in parts)
+    feat_cols = [c for c in pq.ParquetFile(parts[0]).schema_arrow.names if c not in ID_COLS]
+    X = np.empty((n, len(feat_cols)), dtype=np.float32)
+    ids, off = [], 0
+    for p in parts:
+        t = pd.read_parquet(p)
+        X[off:off + len(t)] = t[feat_cols].to_numpy(np.float32)
+        if s1_index is not None:
+            ids.append(pd.DataFrame({"s1_id": s1_index.get_indexer(t["s1_id"]).astype(np.int32),
+                                     "pool_id": pool_index.get_indexer(t["pool_id"]).astype(np.int32)}))
+        else:
+            ids.append(t[ID_COLS])
+        off += len(t)
+        del t
+    return X, pd.concat(ids, ignore_index=True), feat_cols
+
+
+def gold_index_pairs(cfg, s1_index, pool_index):
+    """Ground-truth pairs as integer arrays (s1_idx, pool_idx) - compact, no Python sets."""
+    import numpy as np
+    from src.io_utils import read_tsv
+    gt = read_tsv(os.path.join(cfg["paths"]["data_dir"], "train", "train_ground_truth.tsv"))
+    ex = gt.assign(m=gt["matched_entity_ids"].str.split(",")).explode("m")
+    ex = ex[ex["m"].fillna("") != ""]
+    a = s1_index.get_indexer(ex["source1_entity_id"]).astype(np.int64)
+    b = pool_index.get_indexer(ex["m"]).astype(np.int64)
+    ok = (a >= 0) & (b >= 0)
+    return a[ok], b[ok]
+
+
 def stage_rank(cfg, split):
     """train: grouped OOF LightGBM + decision tuning + final model. test: predict probabilities."""
     import json
@@ -206,21 +245,33 @@ def stage_rank(cfg, split):
     md = model_dir(cfg)
     os.makedirs(md, exist_ok=True)
     if split == "train":
-        from src.decide import tune
-        from src.io_utils import load_ground_truth
-        gold = load_ground_truth(cfg["paths"]["data_dir"])
         import numpy as np
-        from src.ranker import ID_COLS, stage2_matrix
-        feats = load_features(cfg, "train")
+        from src.decide import tune
+        from src.ranker import stage2_matrix
+        # integer ids everywhere: string ids / Python sets for 10M+ rows do not fit in 16 GB
+        s1_ent = pd.read_parquet(os.path.join(d, "s1.parquet"), columns=["entity_id"])["entity_id"]
+        pool_ent = pd.concat([pd.read_parquet(os.path.join(d, f"s{k}.parquet"), columns=["entity_id"])["entity_id"]
+                              for k in (2, 3)], ignore_index=True)
+        s1_index, pool_index = pd.Index(s1_ent), pd.Index(pool_ent)
+        n_pool = len(pool_index)
+        X, df, feat_cols = load_feature_matrix(cfg, "train", s1_index, pool_index)
+        ga, gb = gold_index_pairs(cfg, s1_index, pool_index)
         q = pd.read_parquet(os.path.join(d, "query_idx.parquet"))["s1_idx"].to_numpy()
-        all_ids = pd.read_parquet(os.path.join(d, "s1.parquet"), columns=["entity_id"])["entity_id"].to_numpy()
-        s1_ids = all_ids[q].tolist()
-        y = np.array([int(p in gold.get(s, ())) for s, p in zip(feats["s1_id"], feats["pool_id"])], dtype=np.int8)
-        feat_cols = [c for c in feats.columns if c not in ID_COLS]
-        df = feats[["s1_id", "pool_id"]].copy()
-        X = feats[feat_cols].to_numpy(np.float32)
-        del feats  # keep a single float32 copy of the features in memory
-        models, oof, feat_cols = train_lgbm(X, y, df["s1_id"].to_numpy(), feat_cols, cfg)
+        s1_ids = q.tolist()
+        in_q = np.isin(ga, q)
+        gold = {}
+        for a_, b_ in zip(ga[in_q], gb[in_q]):
+            gold.setdefault(int(a_), set()).add(int(b_))
+        key = df["s1_id"].to_numpy(np.int64) * n_pool + df["pool_id"].to_numpy(np.int64)
+        y = np.isin(key, ga * n_pool + gb).astype(np.int8)
+        del key, ga, gb, pool_index, pool_ent
+        from src.evaluate import fold_of
+        n_folds = cfg["validation"]["n_folds"]
+        fold_by_s1 = np.zeros(len(s1_ent), dtype=np.int8)
+        fold_by_s1[q] = [fold_of(x, n_folds) for x in s1_ent.to_numpy()[q]]
+        fold = fold_by_s1[df["s1_id"].to_numpy()]
+        print(f"[rank:train] {len(df):,} pairs, {int(y.sum()):,} positives, {len(q):,} S1", flush=True)
+        models, oof, feat_cols = train_lgbm(X, y, fold, feat_cols, cfg)
         df["prob"] = oof
         df.to_parquet(os.path.join(d, "oof.parquet"), index=False)
         params, score = tune(df, gold, s1_ids)
@@ -235,7 +286,7 @@ def stage_rank(cfg, split):
         X2, ctx_cols = stage2_matrix(X, df, oof)
         del X
         feat_cols2 = feat_cols + ctx_cols
-        models2, oof2, _ = train_lgbm(X2, y, df["s1_id"].to_numpy(), feat_cols2, cfg)
+        models2, oof2, _ = train_lgbm(X2, y, fold, feat_cols2, cfg)
         del X2
         df["prob"] = oof2
         params2, score2 = tune(df, gold, s1_ids)
@@ -310,6 +361,9 @@ def stage_decide(cfg, split):
 def main():
     """Run the requested pipeline stage(s) for the requested split."""
     args = parse_args()
+    if os.name == "nt":  # keep all cores when the laptop is locked (Windows EcoQoS throttling)
+        from src.no_throttle import disable_throttling
+        disable_throttling()
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
     stages = STAGES if args.stage == "all" else [args.stage]

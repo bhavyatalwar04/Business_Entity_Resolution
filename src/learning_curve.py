@@ -27,6 +27,9 @@ def main():
     ap.add_argument("--feats", default="artefacts/train_v1/feats")
     ap.add_argument("--lr", type=float, default=0.1)
     args = ap.parse_args()
+    if os.name == "nt":  # keep all cores when the laptop is locked (Windows EcoQoS throttling)
+        from src.no_throttle import disable_throttling
+        disable_throttling()
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
     gold = load_ground_truth(cfg["paths"]["data_dir"])
@@ -40,13 +43,13 @@ def main():
     val_ids = [i for i in uniq if fold[i] == 0]
     train_ids = np.array([i for i in uniq if fold[i] != 0])
     np.random.RandomState(0).shuffle(train_ids)
-    va = np.isin(s1, val_ids)
+    va = feats["s1_id"].isin(set(val_ids)).to_numpy()  # hash-based (np.isin on strings is O(n*m))
     Xva = feats.loc[va, cols].to_numpy(np.float32)
     params = dict(lgb_params(cfg), learning_rate=args.lr)
     print(f"validation: {len(val_ids):,} S1 fixed | training pool: {len(train_ids):,} S1", flush=True)
     for frac in (0.125, 0.25, 0.5, 1.0):
         sub = set(train_ids[:int(len(train_ids) * frac)])
-        tr = np.array([x in sub for x in s1])
+        tr = feats["s1_id"].isin(sub).to_numpy()
         dtr = lgb.Dataset(feats.loc[tr, cols].to_numpy(np.float32), y[tr])
         dva = lgb.Dataset(Xva, y[va], reference=dtr)
         m = lgb.train(params, dtr, 5000, valid_sets=[dva], callbacks=[lgb.early_stopping(100, verbose=False)])

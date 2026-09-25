@@ -92,6 +92,9 @@ def main():
     ap.add_argument("--max_len", type=int, default=48)
     ap.add_argument("--out", default="artefacts/embed_ft")
     args = ap.parse_args()
+    if os.name == "nt":  # keep all cores when the laptop is locked (Windows EcoQoS throttling)
+        from src.no_throttle import disable_throttling
+        disable_throttling()
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
     torch.manual_seed(42)

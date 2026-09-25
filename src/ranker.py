@@ -22,32 +22,35 @@ def lgb_params(cfg):
         "objective": "binary", "learning_rate": c["learning_rate"], "num_leaves": c["num_leaves"],
         "min_data_in_leaf": c.get("min_data_in_leaf", 50), "feature_fraction": c.get("feature_fraction", 0.8),
         "bagging_fraction": c.get("bagging_fraction", 0.8), "bagging_freq": 1, "lambda_l2": 1.0,
-        "verbose": -1, "seed": cfg["seed"], "num_threads": -1,
+        "verbose": -1, "seed": cfg["seed"], "num_threads": max(1, (os.cpu_count() or 2) - 2),
     }
 
 
-def train_lgbm(X, y, s1_ids, feat_cols, cfg):
-    """Train with folds grouped by S1 id on a float32 matrix X; return (fold models, OOF, feat_cols).
-    Each fold's LightGBM Dataset is constructed immediately so its row slice can be freed
-    (keeps peak memory near one copy of X - needed for 10M+ rows on 16 GB)."""
+def train_lgbm(X, y, fold, feat_cols, cfg):
+    """Train with folds grouped by S1 (row fold ids given) on float32 X; return (fold models, OOF, feat_cols).
+    Each fold's binned Dataset is built from a row copy that is freed immediately after construction,
+    so peak memory stays near one copy of X plus one fold slice."""
     y = np.asarray(y, dtype=np.int8)
-    n_folds = cfg["validation"]["n_folds"]
-    fold_map = {s: fold_of(s, n_folds) for s in pd_unique(s1_ids)}
-    fold = np.array([fold_map[s] for s in s1_ids], dtype=np.int8)
+    n_folds = cfg["validation"]["n_folds"]  # fold[i] = crc32(s1_id) % n_folds, precomputed per row
     oof = np.zeros(len(y))
     models = []
     params = lgb_params(cfg)
     for k in range(n_folds):
-        tr, va = fold != k, fold == k
+        tr, va = np.flatnonzero(fold != k), np.flatnonzero(fold == k)
+        # per-fold binned Datasets built from row copies that are freed right after construction
+        # (LightGBM subset() views trained single-threaded here, so copies are used instead)
         Xtr = X[tr]
-        dtr = lgb.Dataset(Xtr, y[tr], feature_name=feat_cols, free_raw_data=True).construct()
+        dtr = lgb.Dataset(Xtr, y[tr], feature_name=feat_cols, params=params, free_raw_data=True).construct()
         del Xtr
         Xva = X[va]
-        dva = lgb.Dataset(Xva, y[va], reference=dtr).construct()
+        dva = lgb.Dataset(Xva, y[va], reference=dtr, params=params).construct()
+        del Xva
         m = lgb.train(params, dtr, num_boost_round=cfg["lgbm"]["n_estimators"], valid_sets=[dva],
                       callbacks=[lgb.early_stopping(cfg["lgbm"]["early_stopping_rounds"], verbose=False)])
-        oof[va] = m.predict(Xva, num_iteration=m.best_iteration)
-        del dtr, dva, Xva
+        for s in range(0, len(va), 1_000_000):  # predict in slices to avoid a big X[va] copy
+            idx = va[s:s + 1_000_000]
+            oof[idx] = m.predict(X[idx], num_iteration=m.best_iteration)
+        del dtr, dva
         models.append(m)
         print(f"  fold {k}: best_iter {m.best_iteration}, val logloss {m.best_score['valid_0']['binary_logloss']:.4f}",
               flush=True)
