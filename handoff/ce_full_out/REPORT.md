@@ -19,10 +19,18 @@
   "auc": 0.996289284527138,
   "logloss": 0.06402155206681674
  },
- "minutes_so_far": 147.1
+ "minutes_so_far": 6.4
 }
 ```
-
+## train_info.json
+```
+{
+ "train_pairs": 4000000,
+ "train_pos": 2310794,
+ "steps": 31250,
+ "train_minutes": 133.9
+}
+```
 ## Entity-level held-out macro F0.5 (src/blend_eval.py on the handoff 99,964 fold-0 S1; reference ce_large 0.9812 / blend 0.9871)
 ```
 fold-0: 99,964 S1 | 684,947 pairs with lgbm_prob >= 0.001 | CE missing on 0
@@ -39,3 +47,4 @@ fold-0: 99,964 S1 | 684,947 pairs with lgbm_prob >= 0.001 | CE missing on 0
 ```
     [ce 02:54:34] train sample: core 10,490,256 (pos + prob>=0.001), random fill 1,658,004 -> using 4,000,000
     [ce 02:54:37] fold-0 list: step-3 2,635,403 + handoff 684,947 -> union 2,755,596
+    [ce 03:01:18] test list: step-3 10,797,489 + handoff 13,047,424 -> union 13,535,894
