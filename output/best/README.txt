@@ -1,4 +1,5 @@
-output/best = v6_france_st (built 2026-09-26 00:23 IST)
-v5 stacker (LightGBM v2 + CE base + CE large) with the France self-trained CE-large for France rows, France logit -1.
-Held-out India/US: identical to v5 (0.9877). India/US rows identical to v5; France changed on 11.3% of S1.
+output/best = v7a_full_frst (built 2026-09-26 01:58 IST)
+Stacker on full-data (2.2M S1) LightGBM OOF with complete candidate competition + CE base + CE large; France rows use the France self-trained CE-large; France logit -1.
+Held-out India/US macro F0.5: 0.9895 (v5: 0.9877).
 Must beat: v5 public 0.983546.
+A/B partner: output/v7b_full (same without France self-training; India/US identical).
