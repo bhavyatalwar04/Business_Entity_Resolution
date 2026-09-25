@@ -10,6 +10,7 @@ import os
 import lightgbm as lgb
 import numpy as np
 
+from src.cpus import n_cpus
 from src.evaluate import fold_of
 
 ID_COLS = ["s1_id", "pool_id"]
@@ -22,7 +23,7 @@ def lgb_params(cfg):
         "objective": "binary", "learning_rate": c["learning_rate"], "num_leaves": c["num_leaves"],
         "min_data_in_leaf": c.get("min_data_in_leaf", 50), "feature_fraction": c.get("feature_fraction", 0.8),
         "bagging_fraction": c.get("bagging_fraction", 0.8), "bagging_freq": 1, "lambda_l2": 1.0,
-        "verbose": -1, "seed": cfg["seed"], "num_threads": max(1, (os.cpu_count() or 2) - 2),
+        "verbose": -1, "seed": cfg["seed"], "num_threads": n_cpus(),
     }
 
 

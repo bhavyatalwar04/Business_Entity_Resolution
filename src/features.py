@@ -17,10 +17,12 @@ from rapidfuzz import fuzz
 from rapidfuzz.distance import JaroWinkler
 from rapidfuzz.process import cpdist
 
+from src.cpus import n_cpus
+
 
 def _sim(a, b, scorer):
     """Element-wise similarity of aligned string lists scaled to [0, 1]."""
-    return cpdist(a, b, scorer=scorer, workers=-1, dtype=np.float32) / 100.0
+    return cpdist(a, b, scorer=scorer, workers=n_cpus(), dtype=np.float32) / 100.0
 
 
 def _set_stats(sa, sb):
@@ -69,7 +71,7 @@ def decoy_features(A, B, n_jobs=None, min_parallel=200_000):
     cols = [A["name_skel"].tolist(), B["name_skel"].tolist(), A["name_clean"].tolist(), B["name_clean"].tolist(),
             A["addr_clean"].tolist(), B["addr_clean"].tolist()]
     n = len(A)
-    n_jobs = n_jobs or max(1, (os.cpu_count() or 2) - 2)
+    n_jobs = n_jobs or n_cpus()
     if n < min_parallel or n_jobs == 1:
         return _decoy_chunk(cols)
     step = -(-n // (n_jobs * 4))
@@ -157,7 +159,7 @@ def build_pair_features(pairs, s1, pool):
     f["n_partial"] = _sim(ac, bc, fuzz.partial_ratio)
     f["n_tsort"] = _sim(ac, bc, fuzz.token_sort_ratio)
     f["n_tset"] = _sim(ac, bc, fuzz.token_set_ratio)
-    f["n_jw"] = cpdist(ac, bc, scorer=JaroWinkler.normalized_similarity, workers=-1, dtype=np.float32)
+    f["n_jw"] = cpdist(ac, bc, scorer=JaroWinkler.normalized_similarity, workers=n_cpus(), dtype=np.float32)
     f["n_clean_ratio"] = _sim(A["name_clean"].tolist(), B["name_clean"].tolist(), fuzz.ratio)
     ask, bsk = A["name_skel"].tolist(), B["name_skel"].tolist()
     f["n_skel_ratio"] = _sim(ask, bsk, fuzz.ratio)

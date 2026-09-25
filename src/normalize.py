@@ -18,6 +18,8 @@ import numpy as np
 import pandas as pd
 from unidecode import unidecode
 
+from src.cpus import n_cpus
+
 # Legal / corporate designators and filler words (English, Indian, French).
 LEGAL = {
     "pvt", "private", "ltd", "limited", "llc", "llp", "lp", "inc", "incorporated", "corp",
@@ -174,7 +176,7 @@ def normalize_frame(df, workers=None):
     for c in ("business_name", "business_address", "country"):
         df[c] = df[c].fillna("").astype(str)
     names, addrs = df["business_name"].tolist(), df["business_address"].tolist()
-    workers = workers or max(1, (os.cpu_count() or 2) - 2)
+    workers = workers or n_cpus()
     step = max(20000, len(df) // (workers * 4) + 1)
     chunks = [(names[i:i + step], addrs[i:i + step]) for i in range(0, len(df), step)]
     nv, av = [], []
