@@ -18,4 +18,4 @@
 
 ## Files
 - `ce_oof_fold0_part*.parquet`: s1_id, pool_id, ce_prob (float32), sorted by s1_id, zstd
-- `ce_test_part*.parquet`: all 13,047,424 test pairs (added in a follow-up commit)
+- `ce_test_part*.parquet`: all 13,047,424 test pairs (5 parts, 8–22 MB), scored in 23.0 min
