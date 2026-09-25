@@ -119,6 +119,7 @@ def load_ce(d, kind):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--extra", action="append", default=[], help="name=folder of an extra cross-encoder")
+    ap.add_argument("--tag", default="sample")
     ap.add_argument("--pairs", default="handoff/ce/train_pairs_part*.parquet",
                     help="glob of LightGBM OOF pair files; handoff/full_out/oof_train_full_part*.parquet = all 2.2M "
                          "training S1, so candidate competition is complete (as on test)")
@@ -178,6 +179,8 @@ def main():
     for name, cols in sets.items():
         df[f"stack_{name}"] = oof_stack(X[cols].to_numpy())
         names.append(f"stack_{name}")
+    os.makedirs("artefacts/exp", exist_ok=True)
+    df[["s1_id", "pool_id", "label", *names]].to_parquet(os.path.join("artefacts/exp", f"stack_oof_{args.tag}.parquet"))
     for name in names:
         score, by_c, p = held_out(df, name, gold, halves, country)
         print(f"  {name:12s} held-out macro F0.5 {score:.4f} | " +

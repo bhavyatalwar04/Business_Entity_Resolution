@@ -58,6 +58,32 @@ def choose_set(ids, probs, alpha=1.0):
     return list(ids[:best_k])
 
 
+def choose_set_exact(ids, probs, alpha=1.0, max_n=15):
+    """Sorted prefix maximising the EXACT expected F0.5 under independent Bernoulli(p_i) labels:
+    E_k = sum_{a,b} P(TP_k = a) P(rest = b) * 1.25 a / (0.25 (a + b) + k), and E_0 = alpha * P(no match).
+    Distributions are Poisson-binomial, built by convolution (candidates beyond max_n are ignored)."""
+    p = np.asarray(probs[:max_n], dtype=np.float64)
+    n = len(p)
+    if n == 0:
+        return []
+    pre = [np.ones(1)]
+    for x in p:
+        pre.append(np.convolve(pre[-1], [1 - x, x]))
+    suf = [np.ones(1)]
+    for x in p[::-1]:
+        suf.append(np.convolve(suf[-1], [1 - x, x]))
+    suf = suf[::-1]  # suf[k] = distribution of the number of positives among p[k:]
+    best_k, best = 0, alpha * float(np.prod(1 - p))
+    for k in range(1, n + 1):
+        a = np.arange(k + 1)[:, None]
+        b = np.arange(n - k + 1)[None, :]
+        val = np.where(a > 0, 1.25 * a / (0.25 * (a + b) + k), 0.0)
+        score = float(pre[k] @ val @ suf[k])
+        if score > best:
+            best, best_k = score, k
+    return list(ids[:best_k])
+
+
 def apply_params(grouped, s1_ids, params):
     """{s1_id: [matched ids]} for every S1 under the given parameters."""
     out = {}
@@ -68,6 +94,8 @@ def apply_params(grouped, s1_ids, params):
         ids, probs = grouped[s]
         if params["method"] == "thresh":
             out[s] = choose_thresh(ids, probs, params["t"], params["r"])
+        elif params["method"] == "expf_exact":
+            out[s] = choose_set_exact(ids, probs, params["alpha"])
         else:
             out[s] = choose_set(ids, probs, params["alpha"])
     return out

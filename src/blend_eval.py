@@ -26,18 +26,18 @@ def logit(p):
     return np.log(p / (1 - p))
 
 
-def held_out(df, col, gold, halves, country):
+def held_out(df, col, gold, halves, country, grid=FAST_GRID):
     """(cross-fitted macro F0.5, {country: score}, params tuned on all) for probability column col."""
     d = df[["s1_id", "pool_id", col]].rename(columns={col: "prob"})
     per = {}
     for a, b in ((0, 1), (1, 0)):
         ta = d[d["s1_id"].isin(set(halves[a]))]
         tb = d[d["s1_id"].isin(set(halves[b]))]
-        params, _ = tune(ta, gold, halves[a], verbose=False, grid=FAST_GRID, o2o_opts=(True,))
+        params, _ = tune(ta, gold, halves[a], verbose=False, grid=grid, o2o_opts=(True,))
         pred = decide(tb, halves[b], params)
         per.update({s: f05(pred[s], gold.get(s, ())) for s in halves[b]})
     all_ids = halves[0] + halves[1]
-    params, _ = tune(d, gold, all_ids, verbose=False, grid=FAST_GRID, o2o_opts=(True,))
+    params, _ = tune(d, gold, all_ids, verbose=False, grid=grid, o2o_opts=(True,))
     by_c = pd.Series(per).groupby(pd.Series({s: country.get(s) for s in per})).mean().to_dict()
     return float(np.mean(list(per.values()))), by_c, params
 
