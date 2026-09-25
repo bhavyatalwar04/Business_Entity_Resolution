@@ -36,3 +36,15 @@ Decision tuned on OOF: one-to-one + expected-F0.5 prefix selection (alpha = 1.5)
 Top stage-1 features: cand_rank_emb_score, emb_score, cand_gap_emb_score, num_conflict, num_jac,
 n_clean_ratio, a_tset, s1_gap_emb_score — i.e. embedding similarity and candidate competition dominate,
 with house-number conflict as the strongest string signal.
+
+## Validation analysis (src/analysis.py, 200k-S1 OOF)
+- By country: India 0.9646, US 0.9734. By #true matches: 0 (singletons) 0.954, 1 → 0.893, 2 → 0.967, 3+ → 0.975–0.980.
+- Pairs: 691,838 gold | TP 648,988 | FP 7,105 (632 on singletons) | FN 42,850 (blocking 5,387; model/decision 37,463).
+  Pair precision 0.989, recall 0.938 — the decision layer trades recall for precision, as F0.5 rewards.
+- Leave-one-country-out (stage 1 only, 600 rounds, one country as training): US→India 0.9035, India→US 0.9180,
+  i.e. a 0.055–0.061 drop vs in-country. France at test time trains on BOTH countries, so its drop should be smaller.
+
+## Leaderboard estimate (v1)
+Test S1 mix: India 46.8%, US 38.3%, France 15.0%.
+Expected = 0.468·0.9646 + 0.383·0.9734 + 0.150·F_France, with F_France ≈ 0.90–0.94 (LOCO proxy)
+→ **≈ 0.962 (range 0.959–0.965)**.

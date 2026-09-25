@@ -303,7 +303,7 @@ def main():
         elif st == "cross_encoder":
             print("[cross_encoder] not used yet - skipped")
         else:
-            raise NotImplementedError(f"stage={st}")
+            raise ValueError(f"unknown stage {st}")
 
 
 if __name__ == "__main__":
