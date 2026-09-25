@@ -338,9 +338,10 @@ def stage_decide(cfg, split):
     write_submission(cfg, s1_ids, decide(probs, s1_ids, params), cfg["paths"]["output_dir"])
 
 
-def write_submission(cfg, s1_ids, matches, out):
+def write_submission(cfg, s1_ids, matches, out, extra_cands=None):
     """Write matching_results.tsv + candidate_pairs.tsv to `out` (matches restricted to the test
-    candidates) and run the official validator."""
+    candidates) and run the official validator. extra_cands: optional DataFrame (s1_id, pool_id) of
+    additional candidates, e.g. the scored pairs of a run that re-blocked the test set elsewhere."""
     import subprocess
     import sys
 
@@ -354,6 +355,9 @@ def write_submission(cfg, s1_ids, matches, out):
     cand_lists = {}
     for a, p in zip(s1_arr[cands["s1_idx"].to_numpy()], pool_ids[cands["pool_idx"].to_numpy()]):
         cand_lists.setdefault(a, []).append(p)
+    if extra_cands is not None:
+        for a, p in zip(extra_cands["s1_id"].to_numpy(), extra_cands["pool_id"].to_numpy()):
+            cand_lists.setdefault(a, []).append(p)  # write_tsv de-duplicates
     # the matcher can only choose candidates: enforce matches subset of candidates
     for s_id, ms in matches.items():
         if ms:

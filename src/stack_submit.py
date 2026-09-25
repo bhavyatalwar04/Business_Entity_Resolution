@@ -13,15 +13,25 @@ import os
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 import yaml
 
 from src.blend_eval import logit
 from src.decide import decide
 from src.evaluate import fold_of
+from src.io_utils import load_ground_truth
 from src.run import art_dir, write_submission
 from src.stack_eval import STACK_PARAMS, build_X, load_ce
 
 META = ["b_source", "len_name_a", "len_addr_a", "len_name_b", "len_addr_b"]
+
+
+def read_pairs(pattern):
+    """LightGBM pair probabilities (prob or lgbm_prob column) with prob >= 0.001, as lgbm_prob."""
+    files = sorted(glob.glob(pattern))
+    col = "lgbm_prob" if "lgbm_prob" in pq.read_schema(files[0]).names else "prob"
+    df = pd.concat([pd.read_parquet(f, filters=[(col, ">=", 0.001)]) for f in files], ignore_index=True)
+    return df.rename(columns={"prob": "lgbm_prob"})
 
 
 def main():
@@ -33,6 +43,10 @@ def main():
     ap.add_argument("--features", default="pool", choices=["pool", "meta", "extra"])
     ap.add_argument("--extra", action="append", default=[], help="name=folder of an extra cross-encoder")
     ap.add_argument("--swap", default="", help="col=folder: replace <col>_prob on unseen-country test pairs")
+    ap.add_argument("--pairs", default="handoff/ce/train_pairs_part*.parquet", help="LightGBM OOF pair files (train)")
+    ap.add_argument("--s1_from", default="", help="glob of pair files: train only on their fold-0 S1s")
+    ap.add_argument("--lgbm_test", default="artefacts/test/probs_model_v2.parquet", help="LightGBM test prob files")
+    ap.add_argument("--ce_fill", default="zero", choices=["zero", "lgbm"], help="train pairs without a CE score")
     args = ap.parse_args()
     extra = dict(e.split("=") for e in args.extra) if args.features == "extra" else {}
     with open(args.config) as f:
@@ -49,11 +63,20 @@ def main():
         return X if args.features != "pool" else X.drop(columns=META)
 
     # train on all fold-0 pairs (the only S1s with out-of-fold CE scores)
-    pairs = pd.concat([pd.read_parquet(p) for p in sorted(glob.glob("handoff/ce/train_pairs_part*.parquet"))],
-                      ignore_index=True)
-    tr = attach(pairs[(pairs["fold"] == 0) & (pairs["lgbm_prob"] >= 0.001)], "oof_fold0")
+    pairs = read_pairs(args.pairs)
+    if "fold" not in pairs:
+        pairs["fold"] = pairs["s1_id"].map(lambda s: fold_of(s, 5))
+    f0 = pairs[pairs["fold"] == 0]
+    if args.s1_from:
+        keep = set(pd.concat([pd.read_parquet(f, columns=["s1_id"]) for f in sorted(glob.glob(args.s1_from))])["s1_id"])
+        f0 = f0[f0["s1_id"].isin(keep)]
+    if "label" not in f0:
+        gold = load_ground_truth(cfg["paths"]["data_dir"])
+        f0 = f0.assign(label=[int(p in gold.get(s, ())) for s, p in zip(f0["s1_id"], f0["pool_id"])])
+    tr = attach(f0, "oof_fold0")
     for c in ["ce_prob"] + [f"{e}_prob" for e in extra]:
-        tr[c] = tr[c].fillna(0.0)
+        print(f"train {c}: missing on {int(tr[c].isna().sum()):,} of {len(tr):,} pairs", flush=True)
+        tr[c] = tr[c].fillna(0.0 if args.ce_fill == "zero" else tr["lgbm_prob"])
     Xtr = select(build_X(tr, pairs[["s1_id", "pool_id", "lgbm_prob"]], "train", tuple(extra)))
     y = tr["label"].to_numpy()
     del pairs
@@ -65,8 +88,8 @@ def main():
           flush=True)
 
     # test
-    lg = pd.read_parquet("artefacts/test/probs_model_v2.parquet").rename(columns={"prob": "lgbm_prob"})
-    te = attach(lg[lg["lgbm_prob"] >= 0.001], "test")
+    lg = read_pairs(args.lgbm_test)
+    te = attach(lg, "test")
     for c in ["ce_prob"] + [f"{e}_prob" for e in extra]:
         miss = int(te[c].isna().sum())
         print(f"test {c}: missing on {miss:,} of {len(te):,} pairs", flush=True)
@@ -90,9 +113,11 @@ def main():
         print(f"shifted logit by {delta} on {in_c.sum():,} pairs of country {c}", flush=True)
     params_d = {"method": "expf", "alpha": args.alpha, "one_to_one": True}
     s1_ids = s1["entity_id"].tolist()
-    write_submission(cfg, s1_ids, decide(te[["s1_id", "pool_id", "prob"]], s1_ids, params_d), args.out)
+    write_submission(cfg, s1_ids, decide(te[["s1_id", "pool_id", "prob"]], s1_ids, params_d), args.out,
+                     extra_cands=te[["s1_id", "pool_id"]])
     with open(os.path.join(args.out, "blend.json"), "w") as f:
-        json.dump({"model": f"stack_{args.features}", "extra": extra, "swap": args.swap, "decision": params_d, "shift": args.shift},
+        json.dump({"model": f"stack_{args.features}", "extra": extra, "swap": args.swap, "decision": params_d,
+                   "shift": args.shift, "pairs": args.pairs, "lgbm_test": args.lgbm_test},
                   f, indent=1)
 
 
