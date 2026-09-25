@@ -39,3 +39,5 @@ logs/*.log
 !output/v1/
 !output/v1/**
 output/v*/*.tsv
+!handoff/
+!handoff/**
