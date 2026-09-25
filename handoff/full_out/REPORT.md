@@ -17,6 +17,11 @@
   fold 4: best_iter 646, val logloss 0.0157
   decision params {'method': 'expf', 'alpha': 1.5, 'one_to_one': True} -> macro F0.5 0.9805
 [rank:train] stage2 OOF macro F0.5 = 0.9805
+[export] 1,732,544 S1 rows, 5.6% empty, 3.39 matches per S1
+WARNING: ID-existence check is OFF (the default) — not checking that matched/candidate IDs exist in the test set. Every other rule is still checked. Re-run with --check-ids to enable it (needs test_source2/3.tsv; uses more memory). A nonexistent ID only lowers your score, never rejects your submission.
+PASS — no blocking issues found. Safe to submit.
 ```
 
-oof_train_full_part*.parquet: s1_id, pool_id, prob (final-stage OOF), fold = fold_of(s1_id, 5)
+- oof_train_full_part*.parquet: s1_id, pool_id, prob (final-stage OOF), fold
+- probs_model_full_part*.parquet: test probabilities
+- matching_results.tsv.gz / candidate_pairs.tsv.gz(.partNN): decide output (gunzip; cat parts first)
