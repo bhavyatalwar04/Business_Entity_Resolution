@@ -30,6 +30,7 @@ def main():
     ap.add_argument("--w", type=float, default=1.0, help="CE weight")
     ap.add_argument("--params", required=True, help="decision params JSON")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--shift", default="", help="country:delta logit shift for a leaderboard probe")
     args = ap.parse_args()
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
@@ -51,11 +52,19 @@ def main():
         df["prob"] = args.w * a + (1 - args.w) * b
     else:
         df["prob"] = 1 / (1 + np.exp(-(args.w * logit(a) + (1 - args.w) * logit(b))))
-    s1_ids = pd.read_parquet(os.path.join(art_dir(cfg, "test"), "s1.parquet"), columns=["entity_id"])["entity_id"].tolist()
+    s1 = pd.read_parquet(os.path.join(art_dir(cfg, "test"), "s1.parquet"), columns=["entity_id", "country_norm"])
+    s1_ids = s1["entity_id"].tolist()
+    if args.shift:  # leaderboard probe: shift the blended logit of one country's S1s (e.g. france:-1)
+        c, delta = args.shift.split(":")
+        in_c = df["s1_id"].isin(set(s1.loc[s1["country_norm"] == c, "entity_id"])).to_numpy()
+        z = logit(df["prob"].to_numpy())
+        df["prob"] = np.where(in_c, 1 / (1 + np.exp(-(z + float(delta)))), df["prob"].to_numpy())
+        print(f"shifted logit by {delta} on {in_c.sum():,} pairs of country {c}", flush=True)
     matches = decide(df[["s1_id", "pool_id", "prob"]], s1_ids, params)
     write_submission(cfg, s1_ids, matches, args.out)
     with open(os.path.join(args.out, "blend.json"), "w") as f:
-        json.dump({"lgbm": args.lgbm, "blend": args.blend, "w": args.w, "decision": params}, f, indent=1)
+        json.dump({"lgbm": args.lgbm, "blend": args.blend, "w": args.w, "decision": params, "shift": args.shift},
+                  f, indent=1)
 
 
 if __name__ == "__main__":
