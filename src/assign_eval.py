@@ -40,18 +40,22 @@ def main():
     ap.add_argument("--col", default="stack_extra")
     ap.add_argument("--alpha", type=float, default=2.0)
     ap.add_argument("--pairs", default="handoff/ce/train_pairs_part*.parquet")
+    ap.add_argument("--s1_from", default="", help="glob of pair files defining the evaluated fold-0 S1s")
     args = ap.parse_args()
     gold = load_ground_truth("dataset")
     df = pd.read_parquet(f"artefacts/exp/stack_oof_{args.tag}.parquet")[["s1_id", "pool_id", args.col]]
     df = df.rename(columns={args.col: "prob"})
-    allp = pd.concat([pd.read_parquet(f, columns=["s1_id", "pool_id", "lgbm_prob"] if "train_pairs" in args.pairs
-                                      else ["s1_id", "pool_id", "prob"]) for f in sorted(glob.glob(args.pairs))])
-    allp = allp.rename(columns={"prob": "lgbm_prob"})
+    files = sorted(glob.glob(args.pairs))
+    pcol = "lgbm_prob" if "train_pairs" in args.pairs else "prob"
+    allp = pd.concat([pd.read_parquet(f, columns=["s1_id", "pool_id", pcol], filters=[(pcol, ">=", 0.001)])
+                      for f in files]).rename(columns={"prob": "lgbm_prob"})
     df = df.merge(allp, on=["s1_id", "pool_id"], how="left")
     df["top"] = pool_context(allp, df)["pool_is_top"].to_numpy() > 0
     pool = pd.concat([pd.read_parquet(f"artefacts/train/s{k}.parquet", columns=["entity_id", "addr_clean"]) for k in (2, 3)])
     df["eaddr"] = df["pool_id"].isin(set(pool.loc[pool["addr_clean"].str.len() == 0, "entity_id"])).to_numpy()
-    ids = [s for s in allp["s1_id"].unique() if zlib.crc32(s.encode()) % 5 == 0]
+    src = sorted(glob.glob(args.s1_from)) if args.s1_from else files
+    ids = [s for s in pd.concat([pd.read_parquet(f, columns=["s1_id"]) for f in src])["s1_id"].unique()
+           if zlib.crc32(s.encode()) % 5 == 0]
     hh = {s: zlib.crc32(s.encode()) % 10 for s in ids}
     halves = [[s for s in ids if hh[s] == 0], [s for s in ids if hh[s] == 5]]
     params = {"method": "expf", "alpha": args.alpha, "one_to_one": True}

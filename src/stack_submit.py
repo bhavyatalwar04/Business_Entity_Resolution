@@ -32,6 +32,7 @@ def main():
     ap.add_argument("--alpha", type=float, default=1.5)
     ap.add_argument("--features", default="pool", choices=["pool", "meta", "extra"])
     ap.add_argument("--extra", action="append", default=[], help="name=folder of an extra cross-encoder")
+    ap.add_argument("--swap", default="", help="col=folder: replace <col>_prob on unseen-country test pairs")
     args = ap.parse_args()
     extra = dict(e.split("=") for e in args.extra) if args.features == "extra" else {}
     with open(args.config) as f:
@@ -70,6 +71,13 @@ def main():
         miss = int(te[c].isna().sum())
         print(f"test {c}: missing on {miss:,} of {len(te):,} pairs", flush=True)
         te[c] = te[c].fillna(te["lgbm_prob"])
+    if args.swap:  # e.g. ce_large=handoff/ce_france_out: that CE's scores on unseen-country S1s replace the column
+        col, d = args.swap.split("=")
+        sw = pd.concat([pd.read_parquet(p) for p in sorted(glob.glob(os.path.join(d, "ce_test_unseen_part*.parquet")))])
+        sw = sw.drop_duplicates(["s1_id", "pool_id"]).set_index(["s1_id", "pool_id"])["ce_prob"]
+        new = pd.Series(pd.MultiIndex.from_frame(te[["s1_id", "pool_id"]]).map(sw), index=te.index)
+        print(f"swap {col}: {new.notna().sum():,} test pairs replaced from {d}", flush=True)
+        te[f"{col}_prob"] = new.fillna(te[f"{col}_prob"])
     Xte = select(build_X(te, lg, "test", tuple(extra)))
     del lg
     te["prob"] = m.predict(Xte[Xtr.columns])
@@ -84,7 +92,7 @@ def main():
     s1_ids = s1["entity_id"].tolist()
     write_submission(cfg, s1_ids, decide(te[["s1_id", "pool_id", "prob"]], s1_ids, params_d), args.out)
     with open(os.path.join(args.out, "blend.json"), "w") as f:
-        json.dump({"model": f"stack_{args.features}", "extra": extra, "decision": params_d, "shift": args.shift},
+        json.dump({"model": f"stack_{args.features}", "extra": extra, "swap": args.swap, "decision": params_d, "shift": args.shift},
                   f, indent=1)
 
 

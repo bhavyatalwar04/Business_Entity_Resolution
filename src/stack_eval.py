@@ -21,6 +21,7 @@ import zlib
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 
 from src.blend_eval import held_out, logit
 from src.io_utils import load_ground_truth
@@ -120,30 +121,45 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--extra", action="append", default=[], help="name=folder of an extra cross-encoder")
     ap.add_argument("--tag", default="sample")
+    ap.add_argument("--s1_from", default="", help="glob of pair files: evaluate only their fold-0 S1s "
+                    "(e.g. the handoff sample, whose pairs all have CE scores)")
+    ap.add_argument("--ce_fill", default="zero", choices=["zero", "lgbm"],
+                    help="value for pairs without a CE score (new candidates of a re-blocked run)")
     ap.add_argument("--pairs", default="handoff/ce/train_pairs_part*.parquet",
                     help="glob of LightGBM OOF pair files; handoff/full_out/oof_train_full_part*.parquet = all 2.2M "
                          "training S1, so candidate competition is complete (as on test)")
     args = ap.parse_args()
     extra = dict(e.split("=") for e in args.extra)
     gold = load_ground_truth("dataset")
-    all_pairs = pd.concat([pd.read_parquet(p) for p in sorted(glob.glob(args.pairs))], ignore_index=True)
+    files = sorted(glob.glob(args.pairs))
+    pcol = "lgbm_prob" if "lgbm_prob" in pq.read_schema(files[0]).names else "prob"
+    # only pairs with prob >= 0.001 are ever used (stacker rows and candidate competition); filtering at read
+    # time keeps the 54.6M-row full-data table within laptop memory
+    all_pairs = pd.concat([pd.read_parquet(p, filters=[(pcol, ">=", 0.001)]) for p in files], ignore_index=True)
     all_pairs = all_pairs.rename(columns={"prob": "lgbm_prob"})
     if "fold" not in all_pairs:
         all_pairs["fold"] = all_pairs["s1_id"].map(lambda s: zlib.crc32(s.encode()) % 5)
     pairs = all_pairs[all_pairs["fold"] == 0].drop(columns=["fold"])
+    if args.s1_from:
+        keep = set(pd.concat([pd.read_parquet(f, columns=["s1_id"]) for f in sorted(glob.glob(args.s1_from))])["s1_id"])
+        pairs = pairs[pairs["s1_id"].isin(keep)]
     if "label" not in pairs:
         pairs = pairs.assign(label=[int(p in gold.get(s, ())) for s, p in zip(pairs["s1_id"], pairs["pool_id"])])
     print(f"{len(all_pairs):,} pairs, {pairs['s1_id'].nunique():,} fold-0 S1", flush=True)
-    ids = list(pd.unique(pairs["s1_id"]))
+    if args.s1_from:  # every fold-0 S1 of the reference sample, including those without a pair >= 0.001
+        ids = [x for x in keep if zlib.crc32(x.encode()) % 5 == 0]
+    else:  # every fold-0 S1 of the pair table, including those without a pair >= 0.001 (read unfiltered)
+        allids = pd.concat([pd.read_parquet(f, columns=["s1_id"]) for f in files])["s1_id"].unique()
+        ids = [x for x in allids if zlib.crc32(x.encode()) % 5 == 0]
     df = pairs[pairs["lgbm_prob"] >= 0.001].merge(load_ce("handoff/ce_out", "oof_fold0"), on=["s1_id", "pool_id"],
                                                   how="left").reset_index(drop=True)
     print(f"ce_prob: missing on {df['ce_prob'].isna().sum():,} of {len(df):,} pairs", flush=True)
-    df["ce_prob"] = df["ce_prob"].fillna(0.0)
+    df["ce_prob"] = df["ce_prob"].fillna(0.0 if args.ce_fill == "zero" else df["lgbm_prob"])
     for name, d in extra.items():
         e = load_ce(d, "oof_fold0").rename(columns={"ce_prob": f"{name}_prob"})
         df = df.merge(e, on=["s1_id", "pool_id"], how="left")
         print(f"{name}: missing on {df[f'{name}_prob'].isna().sum():,} of {len(df):,} pairs", flush=True)
-        df[f"{name}_prob"] = df[f"{name}_prob"].fillna(0.0)
+        df[f"{name}_prob"] = df[f"{name}_prob"].fillna(0.0 if args.ce_fill == "zero" else df["lgbm_prob"])
     X = build_X(df, all_pairs, "train", tuple(extra))
     base_score_cols = {"lgbm", "lgbm_logit", "ce_prob", "ce_prob_logit", "blend", "n_cands"}
     extra_cols = [c for c in X.columns if any(c.startswith(p) for e in extra for p in (f"{e}_prob", f"ctx_{e}_prob"))
