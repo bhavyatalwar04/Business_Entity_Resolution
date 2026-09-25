@@ -8,6 +8,9 @@ Groups:
              the candidate's S1s (how contested the candidate is)
   meta     : source (2/3), lengths, missing flags. Country is never one-hot encoded.
 """
+import multiprocessing as mp
+import os
+
 import numpy as np
 import pandas as pd
 from rapidfuzz import fuzz
@@ -55,17 +58,33 @@ def _alpha_skel_tokens(text):
     return {skeleton(t) for t in text.split() if len(t) >= 3 and t.isalpha()}
 
 
-def decoy_features(A, B):
+DECOY_COLS = ("n_extra_b", "n_extra_a", "n_extra_b_len", "a_extra_b", "a_extra_a", "a_extra_b_frac",
+              "legal_conflict", "legal_both", "house_prefix", "house_absdiff", "house_lev", "house_samelen")
+
+
+def decoy_features(A, B, n_jobs=None, min_parallel=200_000):
     """Features for near-duplicate decoys: extra words on either side (name and address, typo-tolerant
-    via skeletons), legal-form conflict, and how two house numbers relate (equal / prefix / close)."""
+    via skeletons), legal-form conflict, and how two house numbers relate (equal / prefix / close).
+    Pure-Python loop, so large inputs are split across processes."""
+    cols = [A["name_skel"].tolist(), B["name_skel"].tolist(), A["name_clean"].tolist(), B["name_clean"].tolist(),
+            A["addr_clean"].tolist(), B["addr_clean"].tolist()]
     n = len(A)
-    out = {k: np.zeros(n, np.float32) for k in (
-        "n_extra_b", "n_extra_a", "n_extra_b_len", "a_extra_b", "a_extra_a", "a_extra_b_frac",
-        "legal_conflict", "legal_both", "house_prefix", "house_absdiff", "house_lev", "house_samelen")}
+    n_jobs = n_jobs or max(1, (os.cpu_count() or 2) - 2)
+    if n < min_parallel or n_jobs == 1:
+        return _decoy_chunk(cols)
+    step = -(-n // (n_jobs * 4))
+    chunks = [[c[s:s + step] for c in cols] for s in range(0, n, step)]
+    with mp.Pool(n_jobs) as pool:
+        parts = pool.map(_decoy_chunk, chunks)
+    return {k: np.concatenate([p[k] for p in parts]) for k in DECOY_COLS}
+
+
+def _decoy_chunk(cols):
+    """decoy_features on aligned lists [a_skel, b_skel, a_clean, b_clean, a_addr, b_addr]."""
+    n = len(cols[0])
+    out = {k: np.zeros(n, np.float32) for k in DECOY_COLS}
     from rapidfuzz.distance import Levenshtein as Lev
-    for i, (ask, bsk, acl, bcl, aad, bad) in enumerate(zip(
-            A["name_skel"].tolist(), B["name_skel"].tolist(), A["name_clean"].tolist(), B["name_clean"].tolist(),
-            A["addr_clean"].tolist(), B["addr_clean"].tolist())):
+    for i, (ask, bsk, acl, bcl, aad, bad) in enumerate(zip(*cols)):
         sa, sb = set(ask.split()), set(bsk.split())
         eb, ea = sb - sa, sa - sb
         out["n_extra_b"][i] = len(eb)
