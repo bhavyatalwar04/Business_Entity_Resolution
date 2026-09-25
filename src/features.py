@@ -36,6 +36,66 @@ def _set_stats(sa, sb):
     return jac, inter, both
 
 
+# legal forms canonicalised so that noise variants agree (private/pvt, limited/ltd, s.a.r.l./sarl ...)
+_LEGAL_FORM = {"pvt": "pvt", "private": "pvt", "ltd": "ltd", "limited": "ltd", "llc": "llc", "llp": "llp",
+               "lp": "lp", "inc": "inc", "incorporated": "inc", "corp": "corp", "corporation": "corp",
+               "co": "co", "company": "co", "plc": "plc", "pllc": "pllc", "gmbh": "gmbh", "opc": "opc",
+               "sarl": "sarl", "sas": "sas", "sasu": "sasu", "sa": "sa", "eurl": "eurl", "snc": "snc",
+               "sci": "sci", "scop": "scop"}
+
+
+def _legal_forms(clean):
+    """Canonical legal-form tokens present in a cleaned name."""
+    return {_LEGAL_FORM[t] for t in clean.split() if t in _LEGAL_FORM}
+
+
+def _alpha_skel_tokens(text):
+    """Skeletons of alphabetic tokens (len >= 3) of an address - typo-tolerant street/locality words."""
+    from src.normalize import skeleton
+    return {skeleton(t) for t in text.split() if len(t) >= 3 and t.isalpha()}
+
+
+def decoy_features(A, B):
+    """Features for near-duplicate decoys: extra words on either side (name and address, typo-tolerant
+    via skeletons), legal-form conflict, and how two house numbers relate (equal / prefix / close)."""
+    n = len(A)
+    out = {k: np.zeros(n, np.float32) for k in (
+        "n_extra_b", "n_extra_a", "n_extra_b_len", "a_extra_b", "a_extra_a", "a_extra_b_frac",
+        "legal_conflict", "legal_both", "house_prefix", "house_absdiff", "house_lev", "house_samelen")}
+    from rapidfuzz.distance import Levenshtein as Lev
+    for i, (ask, bsk, acl, bcl, aad, bad) in enumerate(zip(
+            A["name_skel"].tolist(), B["name_skel"].tolist(), A["name_clean"].tolist(), B["name_clean"].tolist(),
+            A["addr_clean"].tolist(), B["addr_clean"].tolist())):
+        sa, sb = set(ask.split()), set(bsk.split())
+        eb, ea = sb - sa, sa - sb
+        out["n_extra_b"][i] = len(eb)
+        out["n_extra_a"][i] = len(ea)
+        out["n_extra_b_len"][i] = max((len(t) for t in eb), default=0)
+        ta, tb = _alpha_skel_tokens(aad), _alpha_skel_tokens(bad)
+        if ta and tb:
+            xb = len(tb - ta)
+            out["a_extra_b"][i] = xb
+            out["a_extra_a"][i] = len(ta - tb)
+            out["a_extra_b_frac"][i] = xb / len(tb)
+        else:
+            out["a_extra_b"][i] = out["a_extra_a"][i] = out["a_extra_b_frac"][i] = -1
+        la, lb = _legal_forms(acl), _legal_forms(bcl)
+        if la and lb:
+            out["legal_both"][i] = 1
+            out["legal_conflict"][i] = float(not (la & lb))
+        else:
+            out["legal_conflict"][i] = -1
+        ha, hb = _first_num(aad), _first_num(bad)
+        if ha and hb:
+            out["house_prefix"][i] = float(ha != hb and (ha.startswith(hb) or hb.startswith(ha)))
+            out["house_absdiff"][i] = np.log1p(abs(int(ha[:9]) - int(hb[:9])))
+            out["house_lev"][i] = Lev.distance(ha, hb)
+            out["house_samelen"][i] = float(len(ha) == len(hb))
+        else:
+            out["house_prefix"][i] = out["house_absdiff"][i] = out["house_lev"][i] = out["house_samelen"][i] = -1
+    return out
+
+
 def _first_num(addr):
     """First digit run of an address string (house / door number), or ''."""
     for t in addr.split():
@@ -109,6 +169,9 @@ def build_pair_features(pairs, s1, pool):
     f["house_eq"] = np.where((fa != "") & (fb != ""), (fa == fb).astype(np.int8), -1).astype(np.int8)
     f["pc_jac"], _, f["pc_both"] = _set_stats(A["postal"].tolist(), B["postal"].tolist())
     f["lm_jac"], f["lm_inter"], _ = _set_stats(A["landmarks"].tolist(), B["landmarks"].tolist())
+
+    for k, v in decoy_features(A, B).items():
+        f[k] = v
 
     f["source"] = B["source"].values.astype(np.int8)
     f["len_name_a"] = A["name_core"].str.len().values.astype(np.float32)

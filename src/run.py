@@ -271,11 +271,15 @@ def stage_rank(cfg, split):
         fold_by_s1[q] = [fold_of(x, n_folds) for x in s1_ent.to_numpy()[q]]
         fold = fold_by_s1[df["s1_id"].to_numpy()]
         print(f"[rank:train] {len(df):,} pairs, {int(y.sum()):,} positives, {len(q):,} S1", flush=True)
+        # decision tuning is a pure-Python grid: on very large samples tune on a random S1 subset
+        tune_max = cfg.get("decide", {}).get("tune_max_s1") or len(s1_ids)
+        tune_ids = s1_ids if len(s1_ids) <= tune_max else             np.random.RandomState(cfg["seed"]).choice(np.array(s1_ids), tune_max, replace=False).tolist()
         models, oof, feat_cols = train_lgbm(X, y, fold, feat_cols, cfg)
         df["prob"] = oof
         df.to_parquet(os.path.join(d, "oof.parquet"), index=False)
-        params, score = tune(df, gold, s1_ids)
-        print(f"[rank:train] stage1 OOF macro F0.5 = {score:.4f} on {len(s1_ids):,} S1", flush=True)
+        tdf = df if len(tune_ids) == len(s1_ids) else df[df["s1_id"].isin(set(tune_ids))]
+        params, score = tune(tdf, gold, tune_ids)
+        print(f"[rank:train] stage1 OOF macro F0.5 = {score:.4f} on {len(tune_ids):,} S1", flush=True)
         for i, m in enumerate(models):
             m.save_model(os.path.join(md, f"lgbm_{i}.txt"))
         mc = {"features": feat_cols, "decision": params, "oof_f05": score, "n_models": len(models), "stage2": False}
@@ -289,7 +293,8 @@ def stage_rank(cfg, split):
         models2, oof2, _ = train_lgbm(X2, y, fold, feat_cols2, cfg)
         del X2
         df["prob"] = oof2
-        params2, score2 = tune(df, gold, s1_ids)
+        tdf = df if len(tune_ids) == len(s1_ids) else df[df["s1_id"].isin(set(tune_ids))]
+        params2, score2 = tune(tdf, gold, tune_ids)
         print(f"[rank:train] stage2 OOF macro F0.5 = {score2:.4f}", flush=True)
         if score2 > score + 0.0005:
             for i, m in enumerate(models2):
