@@ -16,4 +16,4 @@
 
 ## Files
 - `ce_oof_fold0_part*.parquet`: s1_id, pool_id, ce_prob (float32), sorted by s1_id, zstd
-- `ce_test_part*.parquet`: pending (follow-up commit)
+- `ce_test_part*.parquet`: all 13,047,424 test pairs, 5 parts
