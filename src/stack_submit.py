@@ -96,8 +96,14 @@ def main():
         te[c] = te[c].fillna(te["lgbm_prob"])
     if args.swap:  # e.g. ce_large=handoff/ce_france_out: that CE's scores on unseen-country S1s replace the column
         col, d = args.swap.split("=")
-        sw = pd.concat([pd.read_parquet(p) for p in sorted(glob.glob(os.path.join(d, "ce_test_unseen_part*.parquet")))])
-        sw = sw.drop_duplicates(["s1_id", "pool_id"]).set_index(["s1_id", "pool_id"])["ce_prob"]
+        files = sorted(glob.glob(os.path.join(d, "ce_test_unseen_part*.parquet")))
+        files += sorted(glob.glob(os.path.join(d, "ce_extra_test_part*.parquet")))  # new step-3 pairs, all countries
+        sw = pd.concat([pd.read_parquet(p) for p in files]).drop_duplicates(["s1_id", "pool_id"])
+        # only S1s of countries absent from training (open set, no hard-coded names)
+        tr_c = set(pd.read_parquet(os.path.join(art_dir(cfg, "train"), "s1.parquet"), columns=["country_norm"])["country_norm"])
+        te_c = pd.read_parquet(os.path.join(art_dir(cfg, "test"), "s1.parquet"), columns=["entity_id", "country_norm"])
+        unseen = set(te_c.loc[~te_c["country_norm"].isin(tr_c), "entity_id"])
+        sw = sw[sw["s1_id"].isin(unseen)].set_index(["s1_id", "pool_id"])["ce_prob"]
         new = pd.Series(pd.MultiIndex.from_frame(te[["s1_id", "pool_id"]]).map(sw), index=te.index)
         print(f"swap {col}: {new.notna().sum():,} test pairs replaced from {d}", flush=True)
         te[f"{col}_prob"] = new.fillna(te[f"{col}_prob"])
