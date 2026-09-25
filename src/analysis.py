@@ -16,7 +16,7 @@ import yaml
 from src.decide import decide
 from src.evaluate import f05
 from src.io_utils import load_ground_truth
-from src.run import art_dir, load_features, load_normalized
+from src.run import art_dir, load_features, load_normalized, model_dir
 
 
 def score_by(preds, gold, ids, key):
@@ -35,7 +35,7 @@ def main():
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
     d = art_dir(cfg, "train")
-    md = os.path.join(cfg["paths"]["artefacts_dir"], "model")
+    md = model_dir(cfg)
     with open(os.path.join(md, "config.json")) as f:
         mc = json.load(f)
     gold = load_ground_truth(cfg["paths"]["data_dir"])

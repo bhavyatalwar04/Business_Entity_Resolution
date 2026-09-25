@@ -26,23 +26,28 @@ def lgb_params(cfg):
     }
 
 
-def train_lgbm(features, labels, cfg):
-    """Train with folds grouped by S1 id; return (fold models, OOF predictions, feature names)."""
-    feat_cols = [c for c in features.columns if c not in ID_COLS]
-    X = features[feat_cols].to_numpy(np.float32)
-    y = np.asarray(labels, dtype=np.int8)
+def train_lgbm(X, y, s1_ids, feat_cols, cfg):
+    """Train with folds grouped by S1 id on a float32 matrix X; return (fold models, OOF, feat_cols).
+    Each fold's LightGBM Dataset is constructed immediately so its row slice can be freed
+    (keeps peak memory near one copy of X - needed for 10M+ rows on 16 GB)."""
+    y = np.asarray(y, dtype=np.int8)
     n_folds = cfg["validation"]["n_folds"]
-    fold = np.array([fold_of(s, n_folds) for s in features["s1_id"]])
+    fold_map = {s: fold_of(s, n_folds) for s in pd_unique(s1_ids)}
+    fold = np.array([fold_map[s] for s in s1_ids], dtype=np.int8)
     oof = np.zeros(len(y))
     models = []
     params = lgb_params(cfg)
     for k in range(n_folds):
         tr, va = fold != k, fold == k
-        dtr = lgb.Dataset(X[tr], y[tr], feature_name=feat_cols, free_raw_data=True)
-        dva = lgb.Dataset(X[va], y[va], reference=dtr)
+        Xtr = X[tr]
+        dtr = lgb.Dataset(Xtr, y[tr], feature_name=feat_cols, free_raw_data=True).construct()
+        del Xtr
+        Xva = X[va]
+        dva = lgb.Dataset(Xva, y[va], reference=dtr).construct()
         m = lgb.train(params, dtr, num_boost_round=cfg["lgbm"]["n_estimators"], valid_sets=[dva],
                       callbacks=[lgb.early_stopping(cfg["lgbm"]["early_stopping_rounds"], verbose=False)])
-        oof[va] = m.predict(X[va], num_iteration=m.best_iteration)
+        oof[va] = m.predict(Xva, num_iteration=m.best_iteration)
+        del dtr, dva, Xva
         models.append(m)
         print(f"  fold {k}: best_iter {m.best_iteration}, val logloss {m.best_score['valid_0']['binary_logloss']:.4f}",
               flush=True)
@@ -50,6 +55,12 @@ def train_lgbm(features, labels, cfg):
     top = sorted(zip(feat_cols, imp), key=lambda x: -x[1])[:15]
     print("  top features: " + ", ".join(n for n, _ in top), flush=True)
     return models, oof, feat_cols
+
+
+def pd_unique(a):
+    """Order-preserving unique values of an array (pandas' hash-based unique)."""
+    import pandas as pd
+    return pd.unique(a)
 
 
 def predict_lgbm(features, model_dir, model_cfg, stage=1):
@@ -83,9 +94,7 @@ def prob_context(df, prob):
     return out
 
 
-def train_stage2(features, prob1, labels, cfg):
-    """Stage 2 = stage-1 features + prob_context, same grouped folds. Returns (models, oof, cols)."""
-    import pandas as pd
-    ctx = prob_context(features, prob1)
-    f2 = pd.concat([features.reset_index(drop=True), ctx], axis=1)
-    return train_lgbm(f2, labels, cfg)
+def stage2_matrix(X, ids_df, prob1):
+    """Stage-2 design matrix = stage-1 features + prob_context columns; returns (X2, context column names)."""
+    ctx = prob_context(ids_df, prob1)
+    return np.hstack([X, ctx.to_numpy(np.float32)]), list(ctx.columns)

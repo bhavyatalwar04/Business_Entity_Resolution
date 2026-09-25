@@ -29,6 +29,16 @@ def parse_args():
     return parser.parse_args()
 
 
+def model_dir(cfg):
+    """Folder holding the trained matcher (paths.model_dir, default artefacts/model)."""
+    return cfg["paths"].get("model_dir") or os.path.join(cfg["paths"]["artefacts_dir"], "model")
+
+
+def probs_path(cfg):
+    """Test probabilities file, tagged by model folder so several model versions can coexist."""
+    return os.path.join(art_dir(cfg, "test"), f"probs_{os.path.basename(os.path.normpath(model_dir(cfg)))}.parquet")
+
+
 def art_dir(cfg, split):
     """artefacts/<split>/, created on demand."""
     d = os.path.join(cfg["paths"]["artefacts_dir"], split)
@@ -157,7 +167,12 @@ def stage_features(cfg, split):
         os.remove(os.path.join(fd, old))
     cands = pd.read_parquet(os.path.join(d, "cands.parquet"))
     ctx = global_context(cands)  # competition context over ALL S1s, as at test time
-    sample = pd.read_parquet(os.path.join(d, "query_idx.parquet"))["s1_idx"].to_numpy()
+    if split == "train":  # training sample size comes from the config (train.sample_s1)
+        ids = pd.read_parquet(os.path.join(d, "s1.parquet"), columns=["entity_id"])
+        sample = query_index(cfg, split, ids)
+        pd.DataFrame({"s1_idx": sample}).to_parquet(os.path.join(d, "query_idx.parquet"), index=False)
+    else:
+        sample = pd.read_parquet(os.path.join(d, "query_idx.parquet"))["s1_idx"].to_numpy()
     if len(sample) < cands["s1_idx"].nunique():
         keep = np.isin(cands["s1_idx"].to_numpy(), sample)
         cands, ctx = cands.loc[keep].reset_index(drop=True), ctx.loc[keep].reset_index(drop=True)
@@ -188,19 +203,24 @@ def stage_rank(cfg, split):
     import json
     from src.ranker import predict_lgbm, train_lgbm
     d = art_dir(cfg, split)
-    md = os.path.join(cfg["paths"]["artefacts_dir"], "model")
+    md = model_dir(cfg)
     os.makedirs(md, exist_ok=True)
     if split == "train":
         from src.decide import tune
         from src.io_utils import load_ground_truth
         gold = load_ground_truth(cfg["paths"]["data_dir"])
+        import numpy as np
+        from src.ranker import ID_COLS, stage2_matrix
         feats = load_features(cfg, "train")
         q = pd.read_parquet(os.path.join(d, "query_idx.parquet"))["s1_idx"].to_numpy()
         all_ids = pd.read_parquet(os.path.join(d, "s1.parquet"), columns=["entity_id"])["entity_id"].to_numpy()
         s1_ids = all_ids[q].tolist()
-        y = [int(p in gold.get(s, ())) for s, p in zip(feats["s1_id"], feats["pool_id"])]
-        models, oof, feat_cols = train_lgbm(feats, y, cfg)
+        y = np.array([int(p in gold.get(s, ())) for s, p in zip(feats["s1_id"], feats["pool_id"])], dtype=np.int8)
+        feat_cols = [c for c in feats.columns if c not in ID_COLS]
         df = feats[["s1_id", "pool_id"]].copy()
+        X = feats[feat_cols].to_numpy(np.float32)
+        del feats  # keep a single float32 copy of the features in memory
+        models, oof, feat_cols = train_lgbm(X, y, df["s1_id"].to_numpy(), feat_cols, cfg)
         df["prob"] = oof
         df.to_parquet(os.path.join(d, "oof.parquet"), index=False)
         params, score = tune(df, gold, s1_ids)
@@ -208,9 +228,15 @@ def stage_rank(cfg, split):
         for i, m in enumerate(models):
             m.save_model(os.path.join(md, f"lgbm_{i}.txt"))
         mc = {"features": feat_cols, "decision": params, "oof_f05": score, "n_models": len(models), "stage2": False}
+        with open(os.path.join(md, "config.json"), "w") as f:
+            json.dump(mc, f, indent=2)
+        del models
         # stage 2: add per-S1 probability context from the OOF stage-1 predictions
-        from src.ranker import train_stage2
-        models2, oof2, feat_cols2 = train_stage2(feats, oof, y, cfg)
+        X2, ctx_cols = stage2_matrix(X, df, oof)
+        del X
+        feat_cols2 = feat_cols + ctx_cols
+        models2, oof2, _ = train_lgbm(X2, y, df["s1_id"].to_numpy(), feat_cols2, cfg)
+        del X2
         df["prob"] = oof2
         params2, score2 = tune(df, gold, s1_ids)
         print(f"[rank:train] stage2 OOF macro F0.5 = {score2:.4f}", flush=True)
@@ -236,7 +262,7 @@ def stage_rank(cfg, split):
                 df["prob"] = predict_lgbm(f2, md, mc, stage=2)
             out.append(df)
             print(f"[rank:test] {p} scored", flush=True)
-        pd.concat(out, ignore_index=True).to_parquet(os.path.join(d, "probs.parquet"), index=False)
+        pd.concat(out, ignore_index=True).to_parquet(probs_path(cfg), index=False)
 
 
 def stage_decide(cfg, split):
@@ -252,11 +278,11 @@ def stage_decide(cfg, split):
         print("[decide] train decisions are tuned and scored inside --stage rank")
         return
     d = art_dir(cfg, "test")
-    md = os.path.join(cfg["paths"]["artefacts_dir"], "model")
+    md = model_dir(cfg)
     with open(os.path.join(md, "config.json")) as f:
         params = json.load(f)["decision"]
     s1_ids = pd.read_parquet(os.path.join(d, "s1.parquet"), columns=["entity_id"])["entity_id"].tolist()
-    probs = pd.read_parquet(os.path.join(d, "probs.parquet"))
+    probs = pd.read_parquet(probs_path(cfg))
     matches = decide(probs, s1_ids, params)
     cands = pd.read_parquet(os.path.join(d, "cands.parquet"), columns=["s1_idx", "pool_idx"])
     pool_ids = np.concatenate([pd.read_parquet(os.path.join(d, f"s{k}.parquet"), columns=["entity_id"])["entity_id"].to_numpy()
@@ -287,6 +313,7 @@ def main():
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
     stages = STAGES if args.stage == "all" else [args.stage]
+    os.makedirs(model_dir(cfg), exist_ok=True)
     for st in stages:
         if st == "normalize":
             stage_normalize(cfg, args.split)
