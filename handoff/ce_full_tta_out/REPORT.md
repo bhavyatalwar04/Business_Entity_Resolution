@@ -1,5 +1,7 @@
 # Test-time augmentation for ce_full (CE-large continued): swapped record order, logit-averaged with the original
 
+> **DO NOT USE.** Swapped-order TTA hurts: ce 0.9538 vs 0.9824, logit blend 0.9797 vs 0.9875 (held-out, 99,964 S1). The CE was trained only with S1 first, so swapped scores are off by 0.13–0.16 on average. Use handoff/ce_full_out instead.
+
 - ce_oof_fold0 / ce_test: averaged scores (same pairs as handoff/ce_full_out); *_swap: swapped-order scores only
 - Code: jobs/ce_tta.py
 
