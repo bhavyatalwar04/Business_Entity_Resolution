@@ -1,1 +1,2 @@
 timestamp,tag,git_hash,val_macro_f05,public_score,change_note
+2026-09-25T06:35+05:30,v1_emb_tok_lgbm2,4ba4e75,0.9699,,fine-tuned e5-small + token blocking (recall 0.992) + LightGBM stage1+2 + one-to-one + expected-F0.5 (alpha 1.5)
