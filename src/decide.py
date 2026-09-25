@@ -73,14 +73,20 @@ def apply_params(grouped, s1_ids, params):
     return out
 
 
-def tune(df, gold, s1_ids, verbose=True):
-    """Grid-search decision parameters (with and without one-to-one); returns (params, score)."""
+FAST_GRID = [{"method": "expf", "alpha": a} for a in (1.0, 1.5, 2.0, 3.0, 5.0)]
+
+
+def tune(df, gold, s1_ids, verbose=True, grid=None, o2o_opts=(True, False)):
+    """Grid-search decision parameters (with and without one-to-one); returns (params, score).
+    Default grid: thresholds x ratios + expected-F0.5 alphas; pass grid=FAST_GRID, o2o_opts=(True,)
+    for the reduced grid (expected-F0.5 with one-to-one has won every full search so far)."""
     best, best_score = None, -1.0
-    for o2o in (True, False):
-        grouped = group_sorted(one_to_one(df) if o2o else df)
+    if grid is None:
         grid = [{"method": "thresh", "t": float(t), "r": r}
                 for t, r in itertools.product(np.round(np.arange(0.10, 0.96, 0.05), 2), [0.0, 0.2, 0.4, 0.6])]
         grid += [{"method": "expf", "alpha": a} for a in (0.5, 1.0, 1.5, 2.0, 3.0, 5.0)]
+    for o2o in o2o_opts:
+        grouped = group_sorted(one_to_one(df) if o2o else df)
         for params in grid:
             preds = apply_params(grouped, s1_ids, params)
             score = float(np.mean([f05(preds[i], gold.get(i, ())) for i in s1_ids]))

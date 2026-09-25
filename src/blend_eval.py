@@ -16,7 +16,7 @@ import zlib
 import numpy as np
 import pandas as pd
 
-from src.decide import decide, tune
+from src.decide import FAST_GRID, decide, tune
 from src.evaluate import f05
 from src.io_utils import load_ground_truth
 
@@ -33,11 +33,11 @@ def held_out(df, col, gold, halves, country):
     for a, b in ((0, 1), (1, 0)):
         ta = d[d["s1_id"].isin(set(halves[a]))]
         tb = d[d["s1_id"].isin(set(halves[b]))]
-        params, _ = tune(ta, gold, halves[a], verbose=False)
+        params, _ = tune(ta, gold, halves[a], verbose=False, grid=FAST_GRID, o2o_opts=(True,))
         pred = decide(tb, halves[b], params)
         per.update({s: f05(pred[s], gold.get(s, ())) for s in halves[b]})
     all_ids = halves[0] + halves[1]
-    params, _ = tune(d, gold, all_ids, verbose=False)
+    params, _ = tune(d, gold, all_ids, verbose=False, grid=FAST_GRID, o2o_opts=(True,))
     by_c = pd.Series(per).groupby(pd.Series({s: country.get(s) for s in per})).mean().to_dict()
     return float(np.mean(list(per.values()))), by_c, params
 
