@@ -1,4 +1,5 @@
 timestamp,tag,git_hash,val_macro_f05,public_score,change_note
 2026-09-25T06:35+05:30,v1_emb_tok_lgbm2,4ba4e75,0.9699,,fine-tuned e5-small + token blocking (recall 0.992) + LightGBM stage1+2 + one-to-one + expected-F0.5 (alpha 1.5)
 2026-09-25T16:22+05:30,v2_500k,2974292,0.9719,,same pipeline as v1; LightGBM trained on 500k S1 (was 200k) lr 0.1; 5.2% empty; 3.40 matches/S1; 6.65% of S1 changed vs v1
-2026-09-25T19:30+05:30,v3_blend_ce_lgbm,f8ef243,0.9865,0.981,CE xlm-roberta-base (HPC) + v2 LightGBM; logit average w=0.5; expf alpha 1.5 one-to-one; val = cross-fitted fold-0 macro F0.5 on 99964 India/US S1 (LightGBM alone 0.9723 / CE alone 0.9801 on same S1); France changed on 30.9% of S1
+2026-09-25T19:30+05:30,v3_blend_ce_lgbm,f8ef243,0.9865,0.980683,CE xlm-roberta-base (HPC) + v2 LightGBM; logit average w=0.5; expf alpha 1.5 one-to-one; val = cross-fitted fold-0 macro F0.5 on 99964 India/US S1 (LightGBM alone 0.9723 / CE alone 0.9801 on same S1); France changed on 30.9% of S1
+2026-09-25T20:45+05:30,v3_fr_strict,73c041f,0.9865,0.98092,v3 blend with France logit shifted -1 (India/US identical to v3); +0.00024 public vs v3 => France +0.0016

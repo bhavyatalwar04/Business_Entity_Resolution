@@ -39,14 +39,14 @@ def pool_context(all_pairs, df):
     how many S1s compete for the pool record, this S1's rank among them, and the best other S1's prob."""
     a = all_pairs[["s1_id", "pool_id", "lgbm_prob"]]
     a = a[a["lgbm_prob"] >= 0.001]
-    g = a.groupby("pool_id")["lgbm_prob"]
-    top2 = g.nlargest(2).groupby(level=0).agg(list)
-    first = top2.map(lambda v: v[0])
-    second = top2.map(lambda v: v[1] if len(v) > 1 else 0.0)
-    n = g.size()
+    a = a.sort_values(["pool_id", "lgbm_prob"], ascending=[True, False])
+    r = a.groupby("pool_id", sort=False).cumcount().to_numpy()
+    first = a.loc[r == 0].set_index("pool_id")["lgbm_prob"]
+    second = a.loc[r == 1].set_index("pool_id")["lgbm_prob"]
+    n = a.groupby("pool_id", sort=False).size()
     out = pd.DataFrame(index=df.index)
     out["pool_n"] = df["pool_id"].map(n).fillna(1).to_numpy()
-    f1, f2 = df["pool_id"].map(first).to_numpy(), df["pool_id"].map(second).to_numpy()
+    f1, f2 = df["pool_id"].map(first).to_numpy(), df["pool_id"].map(second).fillna(0.0).to_numpy()
     p = df["lgbm_prob"].to_numpy()
     out["pool_best_other"] = np.where(p >= f1, f2, f1)
     out["pool_margin"] = p - out["pool_best_other"]
