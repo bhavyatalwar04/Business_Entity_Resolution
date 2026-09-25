@@ -1,0 +1,4 @@
+# keep submission files byte-exact (no CRLF conversion)
+*.tsv -text
+*.gz binary
+*.part* binary
