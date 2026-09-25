@@ -324,12 +324,8 @@ def stage_rank(cfg, split):
 def stage_decide(cfg, split):
     """test: probabilities -> matches; write matching_results.tsv + candidate_pairs.tsv and validate."""
     import json
-    import subprocess
-    import sys
 
-    import numpy as np
     from src.decide import decide
-    from src.io_utils import write_tsv
     if split != "test":
         print("[decide] train decisions are tuned and scored inside --stage rank")
         return
@@ -339,7 +335,18 @@ def stage_decide(cfg, split):
         params = json.load(f)["decision"]
     s1_ids = pd.read_parquet(os.path.join(d, "s1.parquet"), columns=["entity_id"])["entity_id"].tolist()
     probs = pd.read_parquet(probs_path(cfg))
-    matches = decide(probs, s1_ids, params)
+    write_submission(cfg, s1_ids, decide(probs, s1_ids, params), cfg["paths"]["output_dir"])
+
+
+def write_submission(cfg, s1_ids, matches, out):
+    """Write matching_results.tsv + candidate_pairs.tsv to `out` (matches restricted to the test
+    candidates) and run the official validator."""
+    import subprocess
+    import sys
+
+    import numpy as np
+    from src.io_utils import write_tsv
+    d = art_dir(cfg, "test")
     cands = pd.read_parquet(os.path.join(d, "cands.parquet"), columns=["s1_idx", "pool_idx"])
     pool_ids = np.concatenate([pd.read_parquet(os.path.join(d, f"s{k}.parquet"), columns=["entity_id"])["entity_id"].to_numpy()
                                for k in (2, 3)])
@@ -352,7 +359,6 @@ def stage_decide(cfg, split):
         if ms:
             allowed = set(cand_lists.get(s_id, ()))
             matches[s_id] = [m for m in ms if m in allowed]
-    out = cfg["paths"]["output_dir"]
     write_tsv(s1_ids, matches, os.path.join(out, "matching_results.tsv"), "matched_entity_ids")
     write_tsv(s1_ids, cand_lists, os.path.join(out, "candidate_pairs.tsv"), "candidate_entity_ids")
     n_empty = sum(1 for s in s1_ids if not matches.get(s))
