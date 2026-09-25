@@ -119,15 +119,24 @@ def load_ce(d, kind):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--extra", action="append", default=[], help="name=folder of an extra cross-encoder")
+    ap.add_argument("--pairs", default="handoff/ce/train_pairs_part*.parquet",
+                    help="glob of LightGBM OOF pair files; handoff/full_out/oof_train_full_part*.parquet = all 2.2M "
+                         "training S1, so candidate competition is complete (as on test)")
     args = ap.parse_args()
     extra = dict(e.split("=") for e in args.extra)
     gold = load_ground_truth("dataset")
-    all_pairs = pd.concat([pd.read_parquet(p) for p in sorted(glob.glob("handoff/ce/train_pairs_part*.parquet"))],
-                          ignore_index=True)
+    all_pairs = pd.concat([pd.read_parquet(p) for p in sorted(glob.glob(args.pairs))], ignore_index=True)
+    all_pairs = all_pairs.rename(columns={"prob": "lgbm_prob"})
+    if "fold" not in all_pairs:
+        all_pairs["fold"] = all_pairs["s1_id"].map(lambda s: zlib.crc32(s.encode()) % 5)
     pairs = all_pairs[all_pairs["fold"] == 0].drop(columns=["fold"])
+    if "label" not in pairs:
+        pairs = pairs.assign(label=[int(p in gold.get(s, ())) for s, p in zip(pairs["s1_id"], pairs["pool_id"])])
+    print(f"{len(all_pairs):,} pairs, {pairs['s1_id'].nunique():,} fold-0 S1", flush=True)
     ids = list(pd.unique(pairs["s1_id"]))
     df = pairs[pairs["lgbm_prob"] >= 0.001].merge(load_ce("handoff/ce_out", "oof_fold0"), on=["s1_id", "pool_id"],
                                                   how="left").reset_index(drop=True)
+    print(f"ce_prob: missing on {df['ce_prob'].isna().sum():,} of {len(df):,} pairs", flush=True)
     df["ce_prob"] = df["ce_prob"].fillna(0.0)
     for name, d in extra.items():
         e = load_ce(d, "oof_fold0").rename(columns={"ce_prob": f"{name}_prob"})
