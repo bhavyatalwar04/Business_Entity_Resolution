@@ -1,13 +1,21 @@
-"""Stacker over LightGBM + CE scores with per-S1 context, evaluated on the fold-0 S1s of the handoff
-sample with the same cross-fitted protocol as src.blend_eval (so scores are directly comparable).
+"""Stacker over LightGBM + cross-encoder scores with per-S1 and per-candidate competition context,
+evaluated on the fold-0 S1s of the handoff sample with the same cross-fitted protocol as src.blend_eval
+(so scores are directly comparable).
 
 Stacker OOF: fold-0 S1s are split in 4 quarters (crc32 % 20 in {0, 5, 10, 15}); each quarter is
 predicted by a small LightGBM trained on the other three. The decision is then tuned / scored on the
 two halves exactly as in blend_eval.
 
-Usage: python -m src.stack_eval
+Feature sets compared (each a superset of the previous):
+  pool  : scores + S1 context + empty-address flag + candidate competition   (= submission v4)
+  meta  : + record source (S2/S3) and name / address lengths of both records
+  extra : + every extra cross-encoder given with --extra (e.g. ce_large=handoff/ce_large_out)
+
+Usage: python -m src.stack_eval [--extra ce_large=handoff/ce_large_out]
 """
+import argparse
 import glob
+import os
 import zlib
 
 import lightgbm as lgb
@@ -16,6 +24,9 @@ import pandas as pd
 
 from src.blend_eval import held_out, logit
 from src.io_utils import load_ground_truth
+
+STACK_PARAMS = {"objective": "binary", "learning_rate": 0.05, "num_leaves": 31, "min_data_in_leaf": 100,
+                "feature_fraction": 0.9, "bagging_fraction": 0.8, "bagging_freq": 1, "verbose": -1, "seed": 42}
 
 
 def context(df, col, prefix):
@@ -35,8 +46,8 @@ def context(df, col, prefix):
 
 
 def pool_context(all_pairs, df):
-    """Candidate-side competition from LightGBM probabilities over ALL sampled S1s (every fold):
-    how many S1s compete for the pool record, this S1's rank among them, and the best other S1's prob."""
+    """Candidate-side competition from LightGBM probabilities over ALL S1s of the table (every fold):
+    how many S1s compete for the pool record, whether this S1 is the top one, and the best other S1's prob."""
     a = all_pairs[["s1_id", "pool_id", "lgbm_prob"]]
     a = a[a["lgbm_prob"] >= 0.001]
     a = a.sort_values(["pool_id", "lgbm_prob"], ascending=[True, False])
@@ -54,65 +65,113 @@ def pool_context(all_pairs, df):
     return out
 
 
-def stack_features(df):
-    """Pair-level stacker inputs."""
-    X = pd.DataFrame({"lgbm": df["lgbm_prob"], "ce": df["ce_prob"],
-                      "lgbm_logit": logit(df["lgbm_prob"].to_numpy()), "ce_logit": logit(df["ce_prob"].to_numpy())},
-                     index=df.index)
-    X["blend"] = 1 / (1 + np.exp(-(0.5 * X["lgbm_logit"] + 0.5 * X["ce_logit"])))
+def score_features(df, extra=()):
+    """Scores, their logits, blends and per-S1 context for LightGBM, CE base and any extra CE columns."""
+    ces = ["ce_prob"] + [f"{e}_prob" for e in extra]
+    X = pd.DataFrame({"lgbm": df["lgbm_prob"], "lgbm_logit": logit(df["lgbm_prob"].to_numpy())}, index=df.index)
+    for c in ces:
+        X[c] = df[c]
+        X[f"{c}_logit"] = logit(df[c].to_numpy())
+    X["blend"] = 1 / (1 + np.exp(-(0.5 * X["lgbm_logit"] + 0.5 * X["ce_prob_logit"])))
+    if extra:
+        X["blend_all"] = 1 / (1 + np.exp(-np.mean([X["lgbm_logit"]] + [X[f"{c}_logit"] for c in ces], axis=0)))
     X["n_cands"] = df.groupby("s1_id", sort=False)["pool_id"].transform("size")
-    for col, p in (("lgbm_prob", "l"), ("ce_prob", "c")):
-        X = X.join(context(df, col, p))
-    tmp = df[["s1_id"]].assign(blend=X["blend"].to_numpy())
-    X = X.join(context(tmp, "blend", "b"))
-    return X.astype(np.float32)
+    tmp = df[["s1_id"]].copy()
+    for col in ["lgbm", *ces, "blend"] + (["blend_all"] if extra else []):
+        tmp[col] = X[col].to_numpy()
+        X = X.join(context(tmp, col, f"ctx_{col}"))
+    return X
 
 
-def main():
-    gold = load_ground_truth("dataset")
-    pairs = pd.concat([pd.read_parquet(p) for p in sorted(glob.glob("handoff/ce/train_pairs_part*.parquet"))],
-                      ignore_index=True)
-    pairs = pairs[pairs["fold"] == 0].drop(columns=["fold"])
-    ids = list(pd.unique(pairs["s1_id"]))
-    ce = pd.concat([pd.read_parquet(p) for p in sorted(glob.glob("handoff/ce_out/ce_oof_fold0_part*.parquet"))],
-                   ignore_index=True)
-    df = pairs[pairs["lgbm_prob"] >= 0.001].merge(ce, on=["s1_id", "pool_id"], how="left").reset_index(drop=True)
-    df["ce_prob"] = df["ce_prob"].fillna(0.0)
-    X = stack_features(df)
-    X_s1 = X.copy()
-    pool = pd.concat([pd.read_parquet(f"artefacts/train/s{k}.parquet", columns=["entity_id", "addr_clean"])
+def meta_features(df, split):
+    """Record source and name / address lengths (normalised views) of both records."""
+    cols = ["entity_id", "name_clean", "addr_clean"]
+    s1 = pd.read_parquet(f"artefacts/{split}/s1.parquet", columns=cols).set_index("entity_id")
+    pool = pd.concat([pd.read_parquet(f"artefacts/{split}/s{k}.parquet", columns=cols) for k in (2, 3)]).set_index("entity_id")
+    out = pd.DataFrame(index=df.index)
+    out["b_source"] = (df["pool_id"].str[:2] == "S3").astype(np.float32).to_numpy()
+    for side, tab, key in (("a", s1, "s1_id"), ("b", pool, "pool_id")):
+        out[f"len_name_{side}"] = df[key].map(tab["name_clean"].str.len()).fillna(0).to_numpy()
+        out[f"len_addr_{side}"] = df[key].map(tab["addr_clean"].str.len()).fillna(0).to_numpy()
+    return out
+
+
+def build_X(df, all_pairs, split, extra=(), meta=True):
+    """Full stacker matrix for pairs df (with lgbm_prob, ce_prob and <extra>_prob columns)."""
+    X = score_features(df, extra)
+    pool = pd.concat([pd.read_parquet(f"artefacts/{split}/s{k}.parquet", columns=["entity_id", "addr_clean"])
                       for k in (2, 3)])
     empty = set(pool.loc[pool["addr_clean"].str.len() == 0, "entity_id"])
     X["b_empty_addr"] = df["pool_id"].isin(empty).to_numpy().astype(np.float32)
-    X = X.join(pool_context(pd.concat([pd.read_parquet(p, columns=["s1_id", "pool_id", "lgbm_prob"]) for p in
-                                       sorted(glob.glob("handoff/ce/train_pairs_part*.parquet"))]), df)).astype(np.float32)
+    X = X.join(pool_context(all_pairs, df))
+    if meta:
+        X = X.join(meta_features(df, split))
+    return X.astype(np.float32)
+
+
+def load_ce(d, kind):
+    """CE scores of kind 'oof_fold0' or 'test' from folder d, including extra-pair files when present."""
+    files = sorted(glob.glob(os.path.join(d, f"ce_{kind}_part*.parquet")))
+    files += sorted(glob.glob(os.path.join(d, f"ce_extra_{'fold0' if kind == 'oof_fold0' else 'test'}_part*.parquet")))
+    return pd.concat([pd.read_parquet(p) for p in files], ignore_index=True).drop_duplicates(["s1_id", "pool_id"])
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--extra", action="append", default=[], help="name=folder of an extra cross-encoder")
+    args = ap.parse_args()
+    extra = dict(e.split("=") for e in args.extra)
+    gold = load_ground_truth("dataset")
+    all_pairs = pd.concat([pd.read_parquet(p) for p in sorted(glob.glob("handoff/ce/train_pairs_part*.parquet"))],
+                          ignore_index=True)
+    pairs = all_pairs[all_pairs["fold"] == 0].drop(columns=["fold"])
+    ids = list(pd.unique(pairs["s1_id"]))
+    df = pairs[pairs["lgbm_prob"] >= 0.001].merge(load_ce("handoff/ce_out", "oof_fold0"), on=["s1_id", "pool_id"],
+                                                  how="left").reset_index(drop=True)
+    df["ce_prob"] = df["ce_prob"].fillna(0.0)
+    for name, d in extra.items():
+        e = load_ce(d, "oof_fold0").rename(columns={"ce_prob": f"{name}_prob"})
+        df = df.merge(e, on=["s1_id", "pool_id"], how="left")
+        print(f"{name}: missing on {df[f'{name}_prob'].isna().sum():,} of {len(df):,} pairs", flush=True)
+        df[f"{name}_prob"] = df[f"{name}_prob"].fillna(0.0)
+    X = build_X(df, all_pairs, "train", tuple(extra))
+    base_score_cols = {"lgbm", "lgbm_logit", "ce_prob", "ce_prob_logit", "blend", "n_cands"}
+    extra_cols = [c for c in X.columns if any(c.startswith(p) for e in extra for p in (f"{e}_prob", f"ctx_{e}_prob"))
+                  or c.startswith("blend_all") or c.startswith("ctx_blend_all")]
+    meta_cols = ["b_source", "len_name_a", "len_addr_a", "len_name_b", "len_addr_b"]
+    sets = {"pool": [c for c in X.columns if c not in extra_cols and c not in meta_cols],
+            "meta": [c for c in X.columns if c not in extra_cols]}
+    if extra:
+        sets["extra"] = list(X.columns)
     y = df["label"].to_numpy()
-    h = {s: zlib.crc32(s.encode()) % 20 for s in ids}
-    q = df["s1_id"].map(h).to_numpy()
-    params = {"objective": "binary", "learning_rate": 0.05, "num_leaves": 31, "min_data_in_leaf": 100,
-              "feature_fraction": 0.9, "bagging_fraction": 0.8, "bagging_freq": 1, "verbose": -1, "seed": 42}
+    q = df["s1_id"].map({s: zlib.crc32(s.encode()) % 20 for s in ids}).to_numpy()
+
     def oof_stack(M):
         oof = np.zeros(len(df))
         for k in (0, 5, 10, 15):
             te = q == k
-            # early stopping on one of the three training quarters
-            va_q = [x for x in (0, 5, 10, 15) if x != k][0]
+            va_q = [x for x in (0, 5, 10, 15) if x != k][0]  # early stopping on one training quarter
             fit, va = ~te & (q != va_q), q == va_q
-            m = lgb.train(params, lgb.Dataset(M[fit], y[fit]), 3000, valid_sets=[lgb.Dataset(M[va], y[va])],
+            m = lgb.train(STACK_PARAMS, lgb.Dataset(M[fit], y[fit]), 3000, valid_sets=[lgb.Dataset(M[va], y[va])],
                           callbacks=[lgb.early_stopping(100, verbose=False)])
             oof[te] = m.predict(M[te], num_iteration=m.best_iteration)
         return oof
 
-    df["stack"] = oof_stack(X_s1)
-    df["stack_pool"] = oof_stack(X)
-    df["logit_avg_w0.5"] = X["blend"].to_numpy()
     s1 = pd.read_parquet("artefacts/train/s1.parquet", columns=["entity_id", "country_norm"])
     country = dict(zip(s1["entity_id"], s1["country_norm"]))
     hh = {s: zlib.crc32(s.encode()) % 10 for s in ids}
     halves = [[s for s in ids if hh[s] == 0], [s for s in ids if hh[s] == 5]]
-    for name in ("logit_avg_w0.5", "stack", "stack_pool"):
+    df["blend"] = X["blend"].to_numpy()
+    names = ["blend"]
+    if extra:
+        df["blend_all"] = X["blend_all"].to_numpy()
+        names.append("blend_all")
+    for name, cols in sets.items():
+        df[f"stack_{name}"] = oof_stack(X[cols].to_numpy())
+        names.append(f"stack_{name}")
+    for name in names:
         score, by_c, p = held_out(df, name, gold, halves, country)
-        print(f"  {name:16s} held-out macro F0.5 {score:.4f} | " +
+        print(f"  {name:12s} held-out macro F0.5 {score:.4f} | " +
               " | ".join(f"{c} {x:.4f}" for c, x in sorted(by_c.items())) + f" | params(all) {p}", flush=True)
 
 
