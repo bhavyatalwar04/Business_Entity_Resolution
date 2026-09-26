@@ -51,6 +51,8 @@ def main():
     ap.add_argument("--ce_fill", default="zero", choices=["zero", "lgbm"], help="train pairs without a CE score")
     ap.add_argument("--fill", action="append", default=[], help="name=src[:lo:hi], as in src.stack_eval")
     ap.add_argument("--raw", action="store_true", help="add src.raw_feats pair evidence to the stacker")
+    ap.add_argument("--unseen_mix", default="", help="col:w1,w2,...: on unseen-country pairs, logit-mix the stacker "
+                    "prob with <col>_prob at each weight w (one submission per weight, written to <out>_mix<w>)")
     args = ap.parse_args()
     if os.name == "nt":  # keep full CPU when the laptop is locked (Windows EcoQoS)
         from src.no_throttle import disable_throttling
@@ -139,20 +141,31 @@ def main():
         te["prob"] = np.where(np.isnan(new), te["prob"].to_numpy(), new)
         te = pd.concat([te, extra_rows], ignore_index=True)
         print(f"unseen_prob: {np.isfinite(new).sum():,} pairs overridden, {len(extra_rows):,} added", flush=True)
-    if args.shift:
-        c, delta = args.shift.split(":")
-        in_c = te["s1_id"].isin(set(s1.loc[s1["country_norm"] == c, "entity_id"])).to_numpy()
-        z = logit(te["prob"].to_numpy())
-        te["prob"] = np.where(in_c, 1 / (1 + np.exp(-(z + float(delta)))), te["prob"].to_numpy())
-        print(f"shifted logit by {delta} on {in_c.sum():,} pairs of country {c}", flush=True)
+    variants = [(args.out, None)]
+    if args.unseen_mix:  # the stacker learned CE weights on seen countries; re-weight one CE on unseen ones
+        mcol, ws = args.unseen_mix.split(":")
+        variants = [(f"{args.out}_mix{w}", float(w)) for w in ws.split(",")]
+        tr_c = set(pd.read_parquet(os.path.join(art_dir(cfg, "train"), "s1.parquet"), columns=["country_norm"])["country_norm"])
+        in_u = te["s1_id"].isin(set(s1.loc[~s1["country_norm"].isin(tr_c), "entity_id"])).to_numpy()
+        z_stack, z_col = logit(te["prob"].to_numpy()), logit(te[f"{mcol}_prob"].to_numpy())
     params_d = {"method": "expf", "alpha": args.alpha, "one_to_one": True}
     s1_ids = s1["entity_id"].tolist()
-    write_submission(cfg, s1_ids, decide(te[["s1_id", "pool_id", "prob"]], s1_ids, params_d), args.out,
-                     extra_cands=te[["s1_id", "pool_id"]])
-    with open(os.path.join(args.out, "blend.json"), "w") as f:
-        json.dump({"model": f"stack_{args.features}", "extra": extra, "swap": args.swap, "decision": params_d,
-                   "shift": args.shift, "pairs": args.pairs, "lgbm_test": args.lgbm_test},
-                  f, indent=1)
+    for out, w in variants:
+        if w is not None:
+            te["prob"] = np.where(in_u, 1 / (1 + np.exp(-((1 - w) * z_stack + w * z_col))), 1 / (1 + np.exp(-z_stack)))
+            print(f"[{out}] unseen_mix {mcol} w={w} on {in_u.sum():,} pairs", flush=True)
+        if args.shift:
+            c, delta = args.shift.split(":")
+            in_c = te["s1_id"].isin(set(s1.loc[s1["country_norm"] == c, "entity_id"])).to_numpy()
+            z = logit(te["prob"].to_numpy())
+            te["prob"] = np.where(in_c, 1 / (1 + np.exp(-(z + float(delta)))), te["prob"].to_numpy())
+            print(f"shifted logit by {delta} on {in_c.sum():,} pairs of country {c}", flush=True)
+        write_submission(cfg, s1_ids, decide(te[["s1_id", "pool_id", "prob"]], s1_ids, params_d), out,
+                         extra_cands=te[["s1_id", "pool_id"]])
+        with open(os.path.join(out, "blend.json"), "w") as f:
+            json.dump({"model": f"stack_{args.features}", "extra": extra, "swap": args.swap, "decision": params_d,
+                       "shift": args.shift, "unseen_mix": args.unseen_mix, "mix_w": w, "pairs": args.pairs,
+                       "lgbm_test": args.lgbm_test}, f, indent=1)
 
 
 if __name__ == "__main__":
