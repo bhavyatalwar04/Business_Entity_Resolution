@@ -1,0 +1,6 @@
+{
+ "train_pairs": 1000000,
+ "train_pos": 577968,
+ "steps": 31250,
+ "train_minutes": 114.4
+}
