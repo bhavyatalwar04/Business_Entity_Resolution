@@ -1,0 +1,146 @@
+us: 60,000 confident pairs sampled
+
+TOP 1-for-1 substitutions (field, s1 token -> pool token):
+    1174  ('address', 'road', 'rd')
+    1103  ('address', 'drive', 'dr')
+    1065  ('address', 'street', 'st')
+     817  ('address', 'avenue', 'ave')
+     786  ('address', 'tx', 'texas')
+     540  ('name', 'inc', 'incorporated')
+     482  ('address', 'lane', 'ln')
+     385  ('address', 'oh', 'ohio')
+     336  ('address', 'il', 'illinois')
+     313  ('address', 'in', 'indiana')
+     285  ('address', 'tn', 'tennessee')
+     270  ('name', 'inc', 'ínc')
+     260  ('address', 'court', 'ct')
+     226  ('address', 'ma', 'massachusetts')
+     226  ('address', 'az', 'arizona')
+     201  ('address', 'md', 'maryland')
+     189  ('address', 'al', 'alabama')
+     188  ('address', 'va', 'virginia')
+     185  ('address', 'ky', 'kentucky')
+     178  ('address', 'ca', 'california')
+     177  ('address', 'wa', 'washington')
+     163  ('address', 'ut', 'utah')
+     159  ('address', 'ar', 'arkansas')
+     156  ('address', 'mn', 'minnesota')
+     141  ('address', 'circle', 'cir')
+     138  ('address', 'mo', 'missouri')
+     137  ('address', 'wi', 'wisconsin')
+     133  ('address', 'or', 'oregon')
+     124  ('address', 'ok', 'oklahoma')
+     121  ('address', 'street', 'saint')
+     116  ('address', 'place', 'pl')
+     104  ('address', 'ia', 'iowa')
+      88  ('address', 'ct', 'connecticut')
+      76  ('address', 'boulevard', 'blvd')
+      69  ('address', 'trail', 'trl')
+      65  ('address', 'me', 'maine')
+      64  ('name', 'pc', 'inc')
+      63  ('address', 'ks', 'kansas')
+      59  ('name', 'group', 'llc')
+      57  ('name', 'group', 'inc')
+      57  ('address', 'mt', 'montana')
+      55  ('name', 'associates', 'ássociates')
+      54  ('name', 'pc', 'llc')
+      53  ('name', 'care', 'cáre')
+      52  ('name', 'corp', 'corporation')
+      47  ('name', 'and', 'ánd')
+      44  ('address', 'de', 'delaware')
+      42  ('name', 'center', 'cénter')
+      40  ('address', 'pa', 'pennsylvania')
+      37  ('name', 'partners', 'pártners')
+      34  ('address', 'terrace', 'ter')
+      34  ('name', 'inc', 'lnc')
+      33  ('name', 'of', 'óf')
+      31  ('name', 'health', 'héalth')
+      30  ('name', 'corp', 'córp')
+      30  ('name', 'company', 'co')
+      29  ('address', 'highway', 'hwy')
+      29  ('name', 'corporation', 'corp')
+      29  ('name', 'clinic', 'clínic')
+      28  ('address', 'ne', 'nebraska')
+
+TOP tokens only in S1:
+  a:street(6655), a:unit(6286), a:road(5878), n:llc(5748), a:drive(5339), a:avenue(4320), n:inc(4238), a:tx(2893), a:lane(2334), a:ny(2311), a:nc(2033), a:oh(1779), a:il(1577), a:court(1317), a:va(1277), a:tn(1230), a:az(1212), a:ma(1209), a:in(1124), a:wa(961), a:md(919), a:city(877), n:c(870), a:county(858), a:ca(816), a:fl(745), a:al(732), a:mn(702), a:circle(697), a:wi(680), a:or(667), a:place(638), a:ky(614), a:of(608), a:ar(590), a:1(575), n:group(569), a:mo(563), a:ok(543), a:apartment(529), a:boulevard(519), a:ut(516), n:associates(512), n:and(502), n:pc(498), a:ia(497), n:l(472), n:care(469), n:corp(466), n:p(442)
+
+TOP tokens only in pool:
+  a:st(5998), a:rd(5794), a:dr(5257), a:ave(4232), n:com(3658), a:texas(2883), a:new(2546), a:ln(2300), a:york(2291), a:north(2259), a:carolina(2087), a:ohio(1779), a:city(1712), n:center(1694), a:null(1691), a:illinois(1575), a:virginia(1545), n:inc(1331), a:ct(1289), a:tennessee(1228), a:arizona(1206), a:massachusetts(1203), n:services(1193), a:indiana(1120), a:1(1089), a:2(1061), a:washington(988), n:l(946), n:c(945), a:box(921), a:po(921), a:maryland(918), n:llc(916), a:pmb(904), a:a(884), n:the(825), a:california(816), a:saint(742), a:cdp(736), a:alabama(729), a:township(708), a:minnesota(700), a:cir(685), a:wisconsin(672), a:oregon(654), n:service(649), a:n(646), n:corporation(637), a:kentucky(628), a:pl(618)
+
+EXAMPLES:
+  S1  : Unified American Debt Inc | Louisville, 3104 Arjay Ln, KY
+  POOL: @Unifiedamerican | Kentucky, Louisville, Arjay Ln
+
+  S1  : Family Federation Care | 305 Broadway Street, Unit STE B, Pittsburg, KS
+  POOL: Family Federation Care Ltd | Kansas, Pittsburg, Unit STE B, 305 Broadway St
+
+  S1  : Hege Anchor Limited | 9889 22, Frankstown Township, PA
+  POOL: Hege Anchor-[Limited] #75150 | Frankstown Township, 9889 22, Pennsylvania
+
+  S1  : Internal Medicine Specialists LLC | 218 Lost Colony Drive, Nags Head, NC
+  POOL: Internal Medicine  Specialists LLC | Nags Head, 918 Lost Colony Drive, North Carolina
+
+  S1  : Hunger Trust | 1415 Forest Lane, Marion, IN
+  POOL: Hunger-Taurst | IN, 1415 FOREST LN, MARION
+
+  S1  : Morales and Nowak LLC | IL, Elk Grove Village, 915 Christa Court
+  POOL: Morales | IL, Elk Grove Village, 915 Christa Court
+
+  S1  : Netty Felix Peak Railway Inc. | 1564 Dorchester Avenue, Unit 211, Boston, MA
+  POOL: NETTY FELIX  PEAK RAILWAY | 1564 DORCHESTER AENUE, DORCHESTER, MA
+
+  S1  : Interprivate | 2437 53rd Street, Tulsa, OK
+  POOL: INTERPRIVATE | 2437- 53rd Street, Tulsa, Oklahoma
+
+  S1  : Empire Crypto LLC | AZ, Sun City West, 13397 Caraway Drive
+  POOL: Empire Crypto | AZ, 13397 CARAWAY DRIVE, SUN CITY W
+
+  S1  : Harrington Winvest LLC | NY, 3352 Tupper Road, Long Lake
+  POOL: Harrington Winvest | 3352 Tupper Rd, Long Lake, New York
+
+  S1  : Vaor | NY, Halfmoon, 22 Fern Lane
+  POOL: Vaor Service | 022 Fern Ln, Clifton Park, New York
+
+  S1  : Vertex LLC | 721 Cambridge Marketplace Boulevard, Cambridge, MD
+  POOL: LLC Vehrtex | 721 Cambridge Marketplace Boulevard, Cambridge, Maryland
+
+  S1  : Newborn Smart Storage Corp | 1617 Buick Street, Staunton City, VA
+  POOL: Newborn Smart Storage Corp | 1617 Buick St, Staunton, Virginia
+
+  S1  : Clarkstown Ear Nose & Throat Atlantic Center | 1 Squadron Boulevard, Unit Unit B-5, Clarkstown, NY
+  POOL: Clarkstown Center Nose & Throat Átlantic Ear | 1 Squadron Boulevard, # Unit B-5, Clarkstown, New York
+
+  S1  : DK Construction LLC | 441 Windover Drive, Brevard, NC
+  POOL: DK LLC Service | 441 WINDOVER DR, BREVARD, NC
+
+  S1  : Capital Charlton Inc | 125 Roberta Avenue, Northlake, IL
+  POOL: Capital  Inc Services | Northlake, 125- Roberta Avenue, Illinois
+
+  S1  : Guzman, Ashley, O.D. | 222 County Road 3519, Clarksville, AR
+  POOL: Guzman Ashley Ashley O.D. | 588 COUNTY ROAD 3519, CLLARKSVILLE, AR
+
+  S1  : Midwest Trust | 4067 Bakerton Road, Harpers Ferry, WV
+  POOL: Midwest Tarst | 4067 Bakerton Rd, West Virginia, Harpres Ferry
+
+  S1  : AK Internet LLC | 5 Parkview Drive, Carlisle Borough, PA
+  POOL: AK  Internet LLC | 5 Parkview Drive, Carlisle Borough, Pennsylvania
+
+  S1  : Choice Ithax PC | Barrington, IL, 660 Northwest Highway
+  POOL: Choice Ithax PC | BARRINGTON, IL, 660B NORTHWEST HWY
+
+  S1  : Warren Animal Hospital | Unit 1, 929 Tyler Street, MA, Pittsfield
+  POOL: Warren Animal Hospital Ltd | 929 TYLER STREET, PITTSFIELD, MA
+
+  S1  : Fuller Regional Foods LLC | 6526 San Blas Place, Albuquerque, NM
+  POOL: Fuller Regional Folds-Llc | 06526 San Blas Pl, <NULL>, Albuquerque, New Mexico
+
+  S1  : Uptown Deli! | CA, 1141 Fathom Court, Oxnard
+  POOL: uptowndeli.com | 1141 Fathom Court, Oxnard, California
+
+  S1  : Metropolitan Term Inc | 148 Rehoboth Lane, NC, Mooresville
+  POOL: Metropolitan Term Inc | 148 REHOBOTH LANE, MOORESVILLE, NC
+
+  S1  : Gorton Star Stifel PC | 1263 Olson Memorial Highway, Minneapolis, MN
+  POOL: Gorton | 1263 Olson Memorial Highway, Minneapolis, MN
+

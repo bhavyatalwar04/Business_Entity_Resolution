@@ -1,0 +1,146 @@
+france: 60,000 confident pairs sampled
+
+TOP 1-for-1 substitutions (field, s1 token -> pool token):
+    3006  ('address', 'rue', 'r')
+     640  ('name', 'sarl', 'sàrl')
+     416  ('name', 'club', 'çlub')
+     331  ('address', 'avenue', 'av')
+     301  ('address', 'pays', 'atlantique')
+     241  ('name', 'amicale', 'àmicale')
+     221  ('name', 'comite', 'çomite')
+     181  ('name', 'sportive', 'spôrtive')
+     169  ('address', 'allée', 'all')
+     155  ('name', 'amis', 'àmis')
+     151  ('address', 'avenue', 'ave')
+     137  ('name', 'france', 'frànce')
+     134  ('name', 'cie', 'çie')
+     133  ('name', 'centre', 'çentre')
+     129  ('address', 'saint', 'st')
+     128  ('name', 'ecole', 'ècole')
+     120  ('name', 'ecole', 'école')
+     115  ('name', 'france', 'frânce')
+      93  ('address', 'boulevard', 'bd')
+      92  ('address', 'impasse', 'imp')
+      91  ('name', 'societe', 'sôciete')
+      85  ('name', 'loisirs', 'lôisirs')
+      79  ('name', 'anciens', 'ànciens')
+      78  ('name', 'compagnie', 'çompagnie')
+      76  ('address', 'mérignac', 'merignac')
+      75  ('address', 'route', 'rte')
+      72  ('name', 'du', 'dû')
+      72  ('name', 'fils', 'fïls')
+      70  ('name', 'du', 'dù')
+      69  ('name', 'culturelle', 'çulturelle')
+      67  ('name', 'college', 'çollege')
+      65  ('address', 'place', 'pl')
+      64  ('name', 'union', 'unïon')
+      64  ('name', 'fils', 'fîls')
+      61  ('name', 'sport', 'spôrt')
+      61  ('name', 'groupement', 'grôupement')
+      61  ('name', 'union', 'unîon')
+      60  ('name', 'primaire', 'prïmaire')
+      58  ('name', 'parents', 'pârents')
+      58  ('address', 'lège', 'lege')
+      57  ('name', 'primaire', 'prîmaire')
+      55  ('address', 'allée', 'allee')
+      53  ('name', 'parents', 'pàrents')
+      52  ('name', 'frères', 'frs')
+      52  ('name', 'pharmacie', 'phârmacie')
+      51  ('address', 'chemin', 'ch')
+      49  ('address', 'boulevard', 'blvd')
+      49  ('name', 'collectif', 'çollectif')
+      49  ('name', 'cie', 'compagnie')
+      49  ('name', 'foyer', 'fôyer')
+      49  ('name', 'saint', 'st')
+      49  ('name', 'de', 'dë')
+      45  ('name', 'culture', 'çulture')
+      44  ('name', 'lycee', 'lyçee')
+      44  ('name', 'frères', 'frèrès')
+      43  ('name', 'sarl', '5arl')
+      42  ('name', 'compagnie', 'cie')
+      42  ('name', 'de', 'dè')
+      41  ('name', 'pharmacie', 'phàrmacie')
+      40  ('name', 'groupe', 'grôupe')
+
+TOP tokens only in S1:
+  a:de(17844), a:hauts(15196), a:rue(15141), a:france(15125), a:nouvelle(12839), a:aquitaine(12834), a:pays(10984), a:la(8424), n:sarl(5940), a:loire(5531), n:sas(4815), a:avenue(2952), n:eurl(1554), a:allée(1439), n:club(1228), n:sa(1162), a:saint(1098), n:france(1017), n:sasu(944), a:boulevard(883), a:bis(804), n:sci(696), n:amicale(679), a:mérignac(655), n:ecole(652), n:comite(630), n:de(566), a:impasse(518), n:sportive(479), a:lège(468), a:route(463), n:centre(442), n:frères(442), n:amis(419), n:du(415), n:fils(377), n:union(375), n:ei(370), n:cie(361), a:place(359), a:chemin(336), n:parents(331), n:maison(322), n:des(312), n:primaire(309), n:pharmacie(268), n:societe(267), n:fetes(247), n:compagnie(244), n:anciens(220)
+
+TOP tokens only in pool:
+  a:r(15084), a:gironde(6393), a:nord(6361), a:atlantique(5446), n:com(3540), n:a(3112), a:n(2895), a:no(2890), n:s(2849), a:av(1844), a:pas(1140), n:l(1138), n:r(1138), a:st(1034), a:nº(1020), a:all(983), a:ave(878), n:u(725), a:merignac(654), n:sàrl(642), n:sarl(619), n:e(596), n:services(589), n:sas(584), n:sa(572), n:sci(566), a:bd(540), a:imp(480), a:lege(468), a:rte(427), n:cie(416), n:çlub(416), a:allee(381), a:pl(329), a:ch(307), n:sasu(286), n:i(265), a:blvd(258), n:dba(252), n:àmicale(241), a:b(229), n:çomite(221), n:as(221), a:crs(203), n:associés(194), n:et(193), n:spôrtive(181), n:k(174), n:formerly(172), a:q(167)
+
+EXAMPLES:
+  S1  : Midiville Parents SARL | 8 Rue de la Louvière, Lille, Hauts-de-France
+  POOL: Midiville Parents | 8 R. DE LA LOUVIERE, LILLE
+
+  S1  : École primaire de la Jean | Hauts-de-France, Tourcoing, 59 Rue des Orions
+  POOL: École primaire de la Jean SARL | Tourcoing, 59 R Des Orions
+
+  S1  : Aide Services EURL | 25 Avenue des Aquarelles, Nantes, Pays de la Loire
+  POOL: Aide Services | 25 Ave Des Aquarelles, Nantes, Loire-Atlantique
+
+  S1  : Violettes Sportive SARL | 174 Rue Anatole France, Dunkerque, Hauts-de-France
+  POOL: Violettes Sportive (SARL) | 174 RUE ANATOLE FRANCE, DUNKERQUE, Hauts-de-France
+
+  S1  : Lycée de Mjc | 139 Allée des Mimosas, Pessac, Nouvelle-Aquitaine
+  POOL: LYCÉE DE (MJC) | 139 ALL DES MIMOSAS, PESSAC
+
+  S1  : Vivre Inter Anciens SCI | 4 Rue Racine, Nantes, Pays de la Loire
+  POOL: VIVRE INTER ANCIENS SCI | NANTES, 4 RUE RACINE, Pays de la Loire
+
+  S1  : Spirale & Cie SA | 23 Rue Verstraete, Dunkerque, Hauts-de-France
+  POOL: Spirale-& Cie SA | 23 Rue Verstraete, Dunkerque, Nord
+
+  S1  : Deleves Fetes SA | 19 Rue Adolphe, Lille, Hauts-de-France
+  POOL: Deleves SA & Fils | N° 19 R ADOLPHE, LILLE, Hauts-de-France
+
+  S1  : Nantes Compagnie SARL | 4 RUE Jeannine, chez Youssoupha Gueye, Nantes, Pays de la Loire
+  POOL: Nantes  Campangie SARL | 04 R. Jeannine, Chez Youssoupha Gueye, Nantes, Pays de la Loire
+
+  S1  : Clinique Campus | 37 Rue Pierre Blard, Saint-Herblain, Pays de la Loire
+  POOL: CLINIQUE-CAMPUS | 37 RUE PIERRE BLARD, SAINT-HERBLAIN, Loire-Atlantique
+
+  S1  : Maison Membrane SASU | 18 Rue Augereau, Calais, Hauts-de-France
+  POOL: Maison Memrane SASU | N°18 R. Augereau, Calais, Hauts-de-France
+
+  S1  : Fédération des Actions | 31 Place Louise de Béttignies, Lille, Hauts-de-France
+  POOL: Fédération Des Actions | 31 PLACE LOUISE DE BÉTTIGNIES, LILLE
+
+  S1  : Cardiologues Ecole SARL | 10 Rue des Prés, Nantes, Pays de la Loire
+  POOL: Cardiologues Ecole  SARL | 10 Rue Des Prés, Nantes, Loire-Atlantique
+
+  S1  : Classe Collectif EURL | 13 Rue Franz Schrader, Bordeaux, Nouvelle-Aquitaine
+  POOL: classecollectifeurl.com | 13 Rue Franz Schrader, Bordeaux, Nouvelle-Aquitaine
+
+  S1  : Sauvegarde Club SASU | 37 Rue de Chartres, Tourcoing, Hauts-de-France
+  POOL: Sauvegarde Club [SASU] | TOURCOING, 37 - RUE DE CHARTRES, Nord
+
+  S1  : Financement Societe | 5 AV Saint Felix, chez Olga Gogoleva, Nantes, Pays de la Loire
+  POOL: financementsociete.com | 5 Av Smint Felix, Pays de la Loire, Nantes
+
+  S1  : Police & Cie SA | 7 Avenue Gabrielle, La Baule-Escoublac, Pays de la Loire
+  POOL: Police & CIE SA | 7 Avenue Gabrielle, La Baule-escoublac, Loire-Atlantique
+
+  S1  : Doeuvres Ecole | 10 Chemin Renaud, Nantes, Pays de la Loire
+  POOL: Doeuvres Ecole | 10 CHEMIN RENAUD, NANTES, Loire-Atlantique
+
+  S1  : Squadra & Cie | 1 Rue d'Epernay, Mérignac, Nouvelle-Aquitaine
+  POOL: Nexiriwex+ t/a Squadra & Cie | 1 Rue d'Epernay, Mérignac, Nouvelle-Aquitaine
+
+  S1  : Scrabble & Cie SARL | 11 Rue Stuart, Nantes, Pays de la Loire
+  POOL: Sàrl Scrabble & Cie | 11 Rue Stuat, Nantes, Pays de la Loire
+
+  S1  : Clinique Sainte Communale | 9 Avenue Maréchal Ney, Nantes, Pays de la Loire
+  POOL: Clinique  Communale Sainte | 9 Avenue Marechla Ney, Nantes, Pays de la Loire
+
+  S1  : Association des Moto | 34 Rue Pierre Noguey, Bordeaux, Nouvelle-Aquitaine
+  POOL: associationdesmoto.com | 34 R Pierre Noguey, Bordeaux
+
+  S1  : GFG Club SAS | 74 RUE Gutenberg, Lille, Hauts-de-France
+  POOL: GFG  Club | Nº 74 R GUTENBERG, LILLE
+
+  S1  : Maison Droit SAS | 231 Avenue Antoine de Saint Exupéry, Calais, Hauts-de-France
+  POOL: Maison Droit | Pas-de-Calais, 231 AV. ANTOINE DE SAINT EXUPÉRY, CALAIS
+
+  S1  : Foret Sophro Loisirs EI | 62 Allée des Maraichers, Mérignac, Nouvelle-Aquitaine
+  POOL: EI Foret Sophro Loisirs | 62 Allée Des Maraichers, Mérignac
+
