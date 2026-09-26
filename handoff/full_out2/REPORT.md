@@ -16,4 +16,6 @@
   fold 4: best_iter 1256, val logloss 0.0155
   decision params {'method': 'expf', 'alpha': 1.5, 'one_to_one': True} -> macro F0.5 0.9808
 [rank:train] stage2 OOF macro F0.5 = 0.9808
+[export] 1,732,544 S1 rows, 5.6% empty, 3.39 matches per S1
+PASS — no blocking issues found. Safe to submit.
 ```
