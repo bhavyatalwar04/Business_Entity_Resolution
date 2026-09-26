@@ -21,7 +21,7 @@ from src.decide import decide
 from src.evaluate import fold_of
 from src.io_utils import load_ground_truth
 from src.run import art_dir, write_submission
-from src.stack_eval import STACK_PARAMS, build_X, load_ce
+from src.stack_eval import STACK_PARAMS, apply_fill, build_X, load_ce
 
 META = ["b_source", "len_name_a", "len_addr_a", "len_name_b", "len_addr_b"]
 
@@ -49,6 +49,7 @@ def main():
     ap.add_argument("--s1_from", default="", help="glob of pair files: train only on their fold-0 S1s")
     ap.add_argument("--lgbm_test", default="artefacts/test/probs_model_v2.parquet", help="LightGBM test prob files")
     ap.add_argument("--ce_fill", default="zero", choices=["zero", "lgbm"], help="train pairs without a CE score")
+    ap.add_argument("--fill", action="append", default=[], help="name=src[:lo:hi], as in src.stack_eval")
     args = ap.parse_args()
     if os.name == "nt":  # keep full CPU when the laptop is locked (Windows EcoQoS)
         from src.no_throttle import disable_throttling
@@ -81,7 +82,9 @@ def main():
     tr = attach(f0, "oof_fold0")
     for c in ["ce_prob"] + [f"{e}_prob" for e in extra]:
         print(f"train {c}: missing on {int(tr[c].isna().sum()):,} of {len(tr):,} pairs", flush=True)
-        tr[c] = tr[c].fillna(0.0 if args.ce_fill == "zero" else tr["lgbm_prob"])
+        if not any(f.startswith(f"{c[:-5]}=") for f in args.fill):
+            tr[c] = tr[c].fillna(0.0 if args.ce_fill == "zero" else tr["lgbm_prob"])
+    tr = apply_fill(tr, args.fill)
     Xtr = select(build_X(tr, pairs[["s1_id", "pool_id", "lgbm_prob"]], "train", tuple(extra)))
     y = tr["label"].to_numpy()
     del pairs
@@ -98,7 +101,9 @@ def main():
     for c in ["ce_prob"] + [f"{e}_prob" for e in extra]:
         miss = int(te[c].isna().sum())
         print(f"test {c}: missing on {miss:,} of {len(te):,} pairs", flush=True)
-        te[c] = te[c].fillna(te["lgbm_prob"])
+        if not any(f.startswith(f"{c[:-5]}=") for f in args.fill):
+            te[c] = te[c].fillna(te["lgbm_prob"])
+    te = apply_fill(te, args.fill)
     if args.swap:  # e.g. ce_large=handoff/ce_france_out: that CE's scores on unseen-country S1s replace the column
         col, d = args.swap.split("=")
         files = sorted(glob.glob(os.path.join(d, "ce_test_unseen_part*.parquet")))

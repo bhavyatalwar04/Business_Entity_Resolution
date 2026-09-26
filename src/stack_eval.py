@@ -117,6 +117,23 @@ def load_ce(d, kind):
     return pd.concat([pd.read_parquet(p) for p in files], ignore_index=True).drop_duplicates(["s1_id", "pool_id"])
 
 
+def apply_fill(df, specs):
+    """--fill name=src[:lo:hi]: <name>_prob takes <src>_prob where missing and, with lo:hi, also where the
+    0.5/0.5 logit blend of lgbm_prob and <src>_prob is outside [lo, hi] (a CE scored only on contested pairs,
+    e.g. xlm-roberta-xl on test, gets the same coverage on train)."""
+    for spec in specs:
+        name, rest = spec.split("=")
+        src, *rng = rest.split(":")
+        col, fill = f"{name}_prob", df[f"{src}_prob"]
+        keep = df[col].notna()
+        if rng:
+            b = 1 / (1 + np.exp(-(0.5 * logit(df["lgbm_prob"].to_numpy()) + 0.5 * logit(fill.to_numpy()))))
+            keep &= (b >= float(rng[0])) & (b <= float(rng[1]))
+        print(f"fill {col}: own score on {int(keep.sum()):,} of {len(df):,} pairs, rest from {src}", flush=True)
+        df[col] = df[col].where(keep, fill)
+    return df
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--extra", action="append", default=[], help="name=folder of an extra cross-encoder")
@@ -125,10 +142,13 @@ def main():
                     help="stacker with all features under several LightGBM settings (leaves / learning rate)")
     ap.add_argument("--compare_extras", action="store_true",
                     help="only two stackers: with the first --extra only vs with all --extra (skip blends/pool/meta)")
+    ap.add_argument("--only_all", action="store_true", help="with --compare_extras: only the all-extras stacker")
     ap.add_argument("--s1_from", default="", help="glob of pair files: evaluate only their fold-0 S1s "
                     "(e.g. the handoff sample, whose pairs all have CE scores)")
     ap.add_argument("--ce_fill", default="zero", choices=["zero", "lgbm"],
                     help="value for pairs without a CE score (new candidates of a re-blocked run)")
+    ap.add_argument("--fill", action="append", default=[],
+                    help="name=src[:lo:hi]: fill extra <name> from extra <src> (see apply_fill); src listed first")
     ap.add_argument("--pairs", default="handoff/ce/train_pairs_part*.parquet",
                     help="glob of LightGBM OOF pair files; handoff/full_out/oof_train_full_part*.parquet = all 2.2M "
                          "training S1, so candidate competition is complete (as on test)")
@@ -166,7 +186,9 @@ def main():
         e = load_ce(d, "oof_fold0").rename(columns={"ce_prob": f"{name}_prob"})
         df = df.merge(e, on=["s1_id", "pool_id"], how="left")
         print(f"{name}: missing on {df[f'{name}_prob'].isna().sum():,} of {len(df):,} pairs", flush=True)
-        df[f"{name}_prob"] = df[f"{name}_prob"].fillna(0.0 if args.ce_fill == "zero" else df["lgbm_prob"])
+        if not any(f.startswith(f"{name}=") for f in args.fill):
+            df[f"{name}_prob"] = df[f"{name}_prob"].fillna(0.0 if args.ce_fill == "zero" else df["lgbm_prob"])
+    df = apply_fill(df, args.fill)
     X = build_X(df, all_pairs, "train", tuple(extra))
     base_score_cols = {"lgbm", "lgbm_logit", "ce_prob", "ce_prob_logit", "blend", "n_cands"}
     extra_cols = [c for c in X.columns if any(c.startswith(p) for e in extra for p in (f"{e}_prob", f"ctx_{e}_prob"))
@@ -181,6 +203,8 @@ def main():
         drop = [c for c in X.columns if any(c.startswith(p) for e in later for p in (f"{e}_prob", f"ctx_{e}_prob"))
                 or c.startswith("blend_all") or c.startswith("ctx_blend_all")]
         sets = {f"x_{list(extra)[0]}": [c for c in X.columns if c not in drop], "x_all": list(X.columns)}
+        if args.only_all:  # the with-first-extra-only reference is already known
+            sets = {"x_all": list(X.columns)}
     y = df["label"].to_numpy()
     q = df["s1_id"].map({s: zlib.crc32(s.encode()) % 20 for s in ids}).to_numpy()
 
