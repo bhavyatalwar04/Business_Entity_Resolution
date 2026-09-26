@@ -1,7 +1,7 @@
 """Fine-tune the France cross-encoder on synthetic labelled French pairs (src/synth_pairs.py), no external data.
 
 Run this only if the India->US proxy (jobs/proxy_synth.py) shows that synthetic pairs help an unseen country.
-init   : ce_france r1 (artefacts/ce_france/final), the scorer v8 already swaps in for unseen-country S1
+init   : ce_e2 (artefacts/ce_full_large_e2/final), NOT ce_france r1: r1's pseudo-labels are suspect (laptop #105)
 train  : synthetic pairs from France test S1 texts (positives + generator-style decoys) mixed 1:1 with labelled
          handoff train pairs (fold != 0) so India/US behaviour is kept
 output : drop-in replacement for handoff/ce_france_out:
@@ -26,12 +26,15 @@ from src.synth_pairs import build_pairs
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--init", default="artefacts/ce_france/final")
+    ap.add_argument("--init", default="artefacts/ce_full_large_e2/final")
     ap.add_argument("--ckpt", default="artefacts/ce_synth_fr")
     ap.add_argument("--out", default="handoff/ce_synth_fr_out")
     ap.add_argument("--anchors", type=int, default=150_000)
     ap.add_argument("--n_pos", type=int, default=2)
-    ap.add_argument("--n_dec", type=int, default=2)
+    ap.add_argument("--n_dec", type=int, default=1)
+    ap.add_argument("--n_other", type=int, default=1)
+    ap.add_argument("--n_easy", type=int, default=3)
+    ap.add_argument("--easy_thr", type=float, default=0.02, help="ce_e2 prob below which a real candidate is an easy negative")
     ap.add_argument("--bs", type=int, default=128)
     ap.add_argument("--infer_bs", type=int, default=1024)
     ap.add_argument("--lr", type=float, default=5e-6)
@@ -50,7 +53,16 @@ def main():
     seen = set(read_tsv("dataset/train/train_source1.tsv", usecols=["country"])["country"].unique())
     fr = s1[~s1["country"].isin(seen)]
     anchors = fr.sample(min(len(fr), args.anchors), random_state=args.seed)
-    syn = build_pairs(anchors[["entity_id", "business_name", "business_address"]], "FR", rng, args.n_pos, args.n_dec)
+    # label-free ordinary negatives: real France candidates that ce_e2 scores below easy_thr (proxy B lesson, #121)
+    t_te0 = load_texts("dataset", "test")
+    e2 = read_pairs("handoff/ce_full_e2_out/ce_test_part*.parquet")
+    e2 = e2[e2["s1_id"].isin(set(anchors["entity_id"])) & (e2["ce_prob"] < args.easy_thr)]
+    e2["pool_text"] = t_te0.reindex(e2["pool_id"].values).values
+    e2 = e2.dropna(subset=["pool_text"])
+    e2["pool_id"] = "te:" + e2["pool_id"]
+    syn = build_pairs(anchors[["entity_id", "business_name", "business_address"]], "FR", rng, args.n_pos, args.n_dec,
+                      mild=True, n_other=args.n_other, easy_neg=e2[["s1_id", "pool_id", "pool_text"]], n_easy=args.n_easy)
+    del e2
     stats = {"unseen_s1": int(len(fr)), "anchors": int(len(anchors)), "synth_pairs": int(len(syn)),
              "synth_pos": int(syn["label"].sum()), "kinds": syn["kind"].value_counts().to_dict()}
     syn.to_parquet(os.path.join(args.out, "synth_fr.parquet"))
@@ -64,9 +76,10 @@ def main():
                      tr.assign(s1_id="tr:" + tr["s1_id"], pool_id="tr:" + tr["pool_id"])], ignore_index=True)
     stats["replay_pairs"] = int(len(tr))
 
-    t_tr, t_te = load_texts("dataset", "train"), load_texts("dataset", "test")
+    t_tr, t_te = load_texts("dataset", "train"), t_te0
     texts = pd.concat([pd.Series(t_tr.values, index="tr:" + t_tr.index), pd.Series(t_te.values, index="te:" + t_te.index),
-                       pd.Series(syn["pool_text"].values, index=syn["pool_id"].values)])
+                       pd.Series(syn.loc[syn["kind"] != "easy_real", "pool_text"].values,
+                                 index=syn.loc[syn["kind"] != "easy_real", "pool_id"].values)])
     tok = AutoTokenizer.from_pretrained(args.init)
     model = train(args, tok, texts, tr=mix)
     del texts, mix
