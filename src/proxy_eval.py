@@ -40,6 +40,7 @@ def main():
     ap.add_argument("--shifts", default="-2,-1.5,-1,-0.5,0,0.5")
     ap.add_argument("--alpha", type=float, default=1.5)
     ap.add_argument("--drop", default="", help="comma-separated feature-name prefixes left out of the stacker")
+    ap.add_argument("--raw", action="store_true", help="add src.raw_feats pair evidence to the stacker")
     ap.add_argument("--tag", default="base")
     args = ap.parse_args()
     if os.name == "nt":
@@ -70,6 +71,9 @@ def main():
     df["label"] = [int(p in gold.get(s, ())) for s, p in zip(df["s1_id"], df["pool_id"])]
     # pool competition over the fold-0 pairs of both countries (the same table for every variant)
     X_all = build_X(df, df[["s1_id", "pool_id", "lgbm_prob"]], "train", tuple(extra))
+    if args.raw:
+        from src.raw_feats import raw_features
+        X_all = X_all.join(raw_features(df, "train"))
     seen = (df["c"] == args.seen).to_numpy()
     y = df["label"].to_numpy()
     va = seen & df["s1_id"].map(lambda s: zlib.crc32(s.encode()) % 20 == 15).to_numpy()

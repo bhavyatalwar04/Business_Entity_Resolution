@@ -50,6 +50,7 @@ def main():
     ap.add_argument("--lgbm_test", default="artefacts/test/probs_model_v2.parquet", help="LightGBM test prob files")
     ap.add_argument("--ce_fill", default="zero", choices=["zero", "lgbm"], help="train pairs without a CE score")
     ap.add_argument("--fill", action="append", default=[], help="name=src[:lo:hi], as in src.stack_eval")
+    ap.add_argument("--raw", action="store_true", help="add src.raw_feats pair evidence to the stacker")
     args = ap.parse_args()
     if os.name == "nt":  # keep full CPU when the laptop is locked (Windows EcoQoS)
         from src.no_throttle import disable_throttling
@@ -86,6 +87,9 @@ def main():
             tr[c] = tr[c].fillna(0.0 if args.ce_fill == "zero" else tr["lgbm_prob"])
     tr = apply_fill(tr, args.fill)
     Xtr = select(build_X(tr, pairs[["s1_id", "pool_id", "lgbm_prob"]], "train", tuple(extra)))
+    if args.raw:
+        from src.raw_feats import raw_features
+        Xtr = Xtr.join(raw_features(tr, "train"))
     y = tr["label"].to_numpy()
     del pairs
     va = tr["s1_id"].map(lambda s: fold_of(s, 20) == 15).to_numpy()  # early-stopping slice
@@ -118,6 +122,8 @@ def main():
         print(f"swap {col}: {new.notna().sum():,} test pairs replaced from {d}", flush=True)
         te[f"{col}_prob"] = new.fillna(te[f"{col}_prob"])
     Xte = select(build_X(te, lg, "test", tuple(extra)))
+    if args.raw:
+        Xte = Xte.join(raw_features(te, "test"))
     del lg
     te["prob"] = m.predict(Xte[Xtr.columns])
     s1 = pd.read_parquet(os.path.join(art_dir(cfg, "test"), "s1.parquet"), columns=["entity_id", "country_norm"])

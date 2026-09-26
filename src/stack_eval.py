@@ -149,6 +149,7 @@ def main():
                     "(e.g. the handoff sample, whose pairs all have CE scores)")
     ap.add_argument("--ce_fill", default="zero", choices=["zero", "lgbm"],
                     help="value for pairs without a CE score (new candidates of a re-blocked run)")
+    ap.add_argument("--raw", action="store_true", help="add src.raw_feats pair evidence to the stacker")
     ap.add_argument("--fill", action="append", default=[],
                     help="name=src[:lo:hi]: fill extra <name> from extra <src> (see apply_fill); src listed first")
     ap.add_argument("--pairs", default="handoff/ce/train_pairs_part*.parquet",
@@ -192,6 +193,9 @@ def main():
             df[f"{name}_prob"] = df[f"{name}_prob"].fillna(0.0 if args.ce_fill == "zero" else df["lgbm_prob"])
     df = apply_fill(df, args.fill)
     X = build_X(df, all_pairs, "train", tuple(extra))
+    if args.raw:  # raw address / name evidence so the stacker can arbitrate LightGBM vs CE by pair type
+        from src.raw_feats import raw_features
+        X = X.join(raw_features(df, "train"))
     base_score_cols = {"lgbm", "lgbm_logit", "ce_prob", "ce_prob_logit", "blend", "n_cands"}
     extra_cols = [c for c in X.columns if any(c.startswith(p) for e in extra for p in (f"{e}_prob", f"ctx_{e}_prob"))
                   or c.startswith("blend_all") or c.startswith("ctx_blend_all")]
