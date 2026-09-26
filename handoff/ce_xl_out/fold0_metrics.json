@@ -1,0 +1,14 @@
+{
+ "n_union": 890838,
+ "n_step3_rows": 264628,
+ "pos_step3_rows": 83818,
+ "ce_full_on_step3_rows": {
+  "auc": 0.8730860133128575,
+  "logloss": 0.4186660941893106
+ },
+ "step3_lgbm_on_step3_rows": {
+  "auc": 0.887356057098908,
+  "logloss": 0.3865707260131875
+ },
+ "minutes_so_far": 126.3
+}
