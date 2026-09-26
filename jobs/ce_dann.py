@@ -52,18 +52,19 @@ def train_dann(args, tok, src_t1, src_t2, y, tgt_t1, tgt_t2, lam_max, ckpt):
     rng = np.random.RandomState(args.seed)
     model = AutoModelForSequenceClassification.from_pretrained(args.base, num_labels=1).cuda()
     hid = model.config.hidden_size
-    dom = torch.nn.Sequential(torch.nn.Linear(hid, 256), torch.nn.ReLU(), torch.nn.Linear(256, 1)).cuda()
+    dom = torch.nn.Sequential(torch.nn.Linear(hid, 256), torch.nn.ReLU(), torch.nn.Dropout(0.1), torch.nn.Linear(256, 1)).cuda()
     params = list(model.parameters()) + list(dom.parameters())
-    opt = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.01, fused=True)
+    opt = torch.optim.AdamW([{"params": list(model.parameters()), "lr": args.lr},
+                             {"params": list(dom.parameters()), "lr": args.lr * 10}], weight_decay=0.01, fused=True)
     order = rng.permutation(len(y))
     total = (len(order) + args.bs - 1) // args.bs
     sched = get_linear_schedule_with_warmup(opt, int(0.05 * total), total)
     t_order = rng.permutation(len(tgt_t1))
-    t_bs = args.bs // 2
+    t_bs = args.bs  # equal source / target pairs per batch
     tgt_iter = batches(tgt_t1, tgt_t2, np.resize(t_order, total * t_bs), t_bs, tok, args.max_len)
     bce = torch.nn.BCEWithLogitsLoss()
     model.train()
-    t0, step, run = time.time(), 0, [0.0, 0.0, 0]
+    t0, step, run, acc = time.time(), 0, [0.0, 0.0, 0], [0, 0]
     log(f"DANN lam_max {lam_max}: {len(y):,} source pairs, {len(tgt_t1):,} target pairs, {total:,} steps")
     for _, b in batches(src_t1, src_t2, order, args.bs, tok, args.max_len, labels=y):
         _, tb = next(tgt_iter)
@@ -84,12 +85,16 @@ def train_dann(args, tok, src_t1, src_t2, y, tgt_t1, tgt_t2, lam_max, ckpt):
                 dl = torch.cat([torch.zeros(len(h_s)), torch.ones(len(h_t))]).cuda()
                 loss_d = bce(d, dl)
                 loss = loss_m + loss_d
+                acc[0] += int(((d > 0).float() == dl).sum()); acc[1] += len(dl)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(params, 1.0)
         opt.step(); sched.step(); opt.zero_grad(set_to_none=True)
         step += 1
         if step % 50 == 0:
             run[0] += loss_m.item(); run[1] += (loss_d.item() if lam_max > 0 else 0.0); run[2] += 1
+        if step % 200 == 0 and lam_max > 0:
+            log(f"step {step:,} domain-classifier accuracy {acc[0] / max(acc[1], 1):.3f} (want -> 0.5-0.6) lam {lam:.3f}")
+            acc = [0, 0]
         if step % 1000 == 0:
             el = time.time() - t0
             log(f"step {step:,}/{total:,} match loss {run[0] / max(run[2], 1):.4f} domain loss {run[1] / max(run[2], 1):.4f} "
