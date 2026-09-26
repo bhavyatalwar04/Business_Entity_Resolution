@@ -39,6 +39,7 @@ def main():
                     help="pair files whose fold-0 S1s (all, including those without a pair >= 0.001) are scored")
     ap.add_argument("--shifts", default="-2,-1.5,-1,-0.5,0,0.5")
     ap.add_argument("--alpha", type=float, default=1.5)
+    ap.add_argument("--drop", default="", help="comma-separated feature-name prefixes left out of the stacker")
     ap.add_argument("--tag", default="base")
     args = ap.parse_args()
     if os.name == "nt":
@@ -68,22 +69,30 @@ def main():
     df = apply_fill(df, args.fill).reset_index(drop=True)
     df["label"] = [int(p in gold.get(s, ())) for s, p in zip(df["s1_id"], df["pool_id"])]
     # pool competition over the fold-0 pairs of both countries (the same table for every variant)
-    X = build_X(df, df[["s1_id", "pool_id", "lgbm_prob"]], "train", tuple(extra))
+    X_all = build_X(df, df[["s1_id", "pool_id", "lgbm_prob"]], "train", tuple(extra))
     seen = (df["c"] == args.seen).to_numpy()
     y = df["label"].to_numpy()
     va = seen & df["s1_id"].map(lambda s: zlib.crc32(s.encode()) % 20 == 15).to_numpy()
-    m = lgb.train(STACK_PARAMS, lgb.Dataset(X[seen & ~va], y[seen & ~va]), 3000,
-                  valid_sets=[lgb.Dataset(X[va], y[va])], callbacks=[lgb.early_stopping(100, verbose=False)])
     un = df.loc[~seen, ["s1_id", "pool_id"]].copy()
-    un["stack"] = m.predict(X[~seen], num_iteration=m.best_iteration)
-    un["blend"] = X.loc[~seen, "blend"].to_numpy()
+    un["blend"] = X_all["blend"].to_numpy()[~seen]
+    cols = ["blend"]
+    # --drop "a,b;c": one stacker per ';'-separated set of dropped feature prefixes ("" = all features)
+    for k, drop in enumerate(args.drop.split(";")):
+        pre = [p for p in drop.split(",") if p]
+        X = X_all[[c for c in X_all.columns if not any(c.startswith(p) for p in pre)]]
+        m = lgb.train(STACK_PARAMS, lgb.Dataset(X[seen & ~va], y[seen & ~va]), 3000,
+                      valid_sets=[lgb.Dataset(X[va], y[va])], callbacks=[lgb.early_stopping(100, verbose=False)])
+        name = f"stack{k}"
+        un[name] = m.predict(X[~seen], num_iteration=m.best_iteration)
+        cols.insert(k, name)
+        print(f"{name}: drop {pre or 'nothing'} -> {X.shape[1]} features, {m.best_iteration} trees", flush=True)
 
     allids = pd.concat([pd.read_parquet(f, columns=["s1_id"]) for f in sorted(glob.glob(args.ids_from))])["s1_id"].unique()
     ids = [s for s in allids if zlib.crc32(s.encode()) % 5 == 0 and country.get(s) == args.unseen]
-    print(f"stacker {m.best_iteration} trees on {int(seen.sum()):,} {args.seen} pairs | {args.unseen}: "
+    print(f"stackers trained on {int(seen.sum()):,} {args.seen} pairs | {args.unseen}: "
           f"{len(un):,} pairs, {len(ids):,} fold-0 S1", flush=True)
     params = {"method": "expf", "alpha": args.alpha, "one_to_one": True}
-    for colname in ("stack", "blend"):
+    for colname in cols:
         z = logit(un[colname].to_numpy())
         res = []
         for sh in map(float, args.shifts.split(",")):

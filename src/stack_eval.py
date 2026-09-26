@@ -114,6 +114,8 @@ def load_ce(d, kind):
     """CE scores of kind 'oof_fold0' or 'test' from folder d, including extra-pair files when present."""
     files = sorted(glob.glob(os.path.join(d, f"ce_{kind}_part*.parquet")))
     files += sorted(glob.glob(os.path.join(d, f"ce_extra_{'fold0' if kind == 'oof_fold0' else 'test'}_part*.parquet")))
+    if kind == "test":  # unseen-country pairs scored beyond the contested set (e.g. Qwen on ALL France pairs)
+        files += sorted(glob.glob(os.path.join(d, "ce_test_france_part*.parquet")))
     return pd.concat([pd.read_parquet(p) for p in files], ignore_index=True).drop_duplicates(["s1_id", "pool_id"])
 
 
