@@ -1,7 +1,7 @@
 """Fine-tune the France cross-encoder on synthetic labelled French pairs (src/synth_pairs.py), no external data.
 
 Run this only if the India->US proxy (jobs/proxy_synth.py) shows that synthetic pairs help an unseen country.
-init   : ce_e2 (artefacts/ce_full_large_e2/final), NOT ce_france r1: r1's pseudo-labels are suspect (laptop #105)
+init   : ce_full (artefacts/ce_full_large/final). Not ce_france r1 (suspect pseudo-labels, laptop #105) and not ce_e2 (hurt France on LB: v10a_e2 0.98487 < v8)
 train  : synthetic pairs from France test S1 texts (positives + generator-style decoys) mixed 1:1 with labelled
          handoff train pairs (fold != 0) so India/US behaviour is kept
 output : drop-in replacement for handoff/ce_france_out:
@@ -26,7 +26,7 @@ from src.synth_pairs import build_pairs
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--init", default="artefacts/ce_full_large_e2/final")
+    ap.add_argument("--init", default="artefacts/ce_full_large/final")
     ap.add_argument("--ckpt", default="artefacts/ce_synth_fr")
     ap.add_argument("--out", default="handoff/ce_synth_fr_out")
     ap.add_argument("--anchors", type=int, default=150_000)
