@@ -93,9 +93,9 @@ def legal_swap(name, lex, rng):
     return " ".join(keep) if keep else name
 
 
-def name_ops(name, lex, rng, k):
+def name_ops(name, lex, rng, k, extreme=True):
     ops = ["case", "typo", "accent", "noise", "bracket", "legal", "reorder", "strip_acc", "dba", "handle"]
-    p = np.array([3, 3, 2, 1, 1, 3, 1, 1, 0.4, 0.3])
+    p = np.array([3, 3, 2, 1, 1, 3, 1, 1, 0.4 if extreme else 0, 0.3 if extreme else 0])
     for op in rng.choice(ops, size=k, replace=False, p=p / p.sum()):
         if op == "case":
             name = case(name, rng)
@@ -208,12 +208,13 @@ def drop_context(addr, rng):
     return ", ".join(parts)
 
 
-def positive(name, addr, lex, rng):
-    n = name_ops(name, lex, rng, k=int(rng.choice([1, 2, 3], p=[0.4, 0.4, 0.2])))
+def positive(name, addr, lex, rng, mild=False):
+    k = int(rng.choice([1, 2], p=[0.5, 0.5])) if mild else int(rng.choice([1, 2, 3], p=[0.4, 0.4, 0.2]))
+    n = name_ops(name, lex, rng, k=k, extreme=not mild)
     r = rng.rand()
     if lex is LEXICON["FR"] and r < 0.45:
         addr = drop_context(addr, rng)
-    a = "" if r > 0.96 else addr_ops(addr, lex, rng, k=int(rng.choice([1, 2, 3], p=[0.35, 0.45, 0.2])))
+    a = "" if r > (0.99 if mild else 0.96) else addr_ops(addr, lex, rng, k=int(rng.choice([1, 2, 3], p=[0.35, 0.45, 0.2])))
     return f"{n} | {a}"
 
 
@@ -240,18 +241,36 @@ def decoy(name, addr, lex, rng, other_names):
     return f"{name_ops(other, lex, rng, k=1)} | {addr_ops(addr, lex, rng, k=1)}", "same_addr"
 
 
-def build_pairs(anchors, country, rng, n_pos=2, n_dec=2, id_prefix="SYN"):
-    """anchors: DataFrame(entity_id, business_name, business_address) of ONE country. Returns labelled synthetic pairs."""
+def build_pairs(anchors, country, rng, n_pos=2, n_dec=2, id_prefix="SYN", mild=False, n_other=0, easy_neg=None,
+                n_easy=0):
+    """anchors: DataFrame(entity_id, business_name, business_address) of ONE country. Returns labelled synthetic pairs.
+
+    v2 knobs (proxy B failed with hard decoys only: the model turned loose on the new country's text):
+      mild     : no dba/handle forms, <= 2 name ops, 1% empty address
+      n_other  : per anchor, a DIFFERENT anchor's record (unrelated business in the same country), label 0
+      easy_neg : optional DataFrame(s1_id, pool_id, pool_text) of real candidates that a scorer calls confident
+                 negatives (label-free); n_easy of them are sampled per anchor that has any, label 0
+    """
     lex = LEXICON[country]
     other = anchors["business_name"].to_numpy()
+    other_rec = (anchors["business_name"] + " | " + anchors["business_address"]).to_numpy()
     rows = []
     for eid, name, addr in zip(anchors["entity_id"], anchors["business_name"], anchors["business_address"]):
         for _ in range(n_pos):
-            rows.append((eid, positive(name, addr, lex, rng), 1, "pos"))
+            rows.append((eid, None, positive(name, addr, lex, rng, mild=mild), 1, "pos"))
         for _ in range(n_dec):
             t, kind = decoy(name, addr, lex, rng, other)
             if t is not None:
-                rows.append((eid, t, 0, kind))
-    df = pd.DataFrame(rows, columns=["s1_id", "pool_text", "label", "kind"])
-    df.insert(1, "pool_id", [f"{id_prefix}-{country}-{i}" for i in range(len(df))])
+                rows.append((eid, None, t, 0, kind))
+        for _ in range(n_other):
+            t = other_rec[rng.randint(len(other_rec))]
+            if not t.startswith(name + " |"):
+                rows.append((eid, None, t, 0, "other_business"))
+    df = pd.DataFrame(rows, columns=["s1_id", "pool_id", "pool_text", "label", "kind"])
+    df["pool_id"] = [f"{id_prefix}-{country}-{i}" for i in range(len(df))]
+    if easy_neg is not None and n_easy:
+        e = easy_neg[easy_neg["s1_id"].isin(set(anchors["entity_id"]))]
+        e = e.iloc[rng.permutation(len(e))]
+        e = e[e.groupby("s1_id").cumcount() < n_easy]
+        df = pd.concat([df, e[["s1_id", "pool_id", "pool_text"]].assign(label=0, kind="easy_real")], ignore_index=True)
     return df
