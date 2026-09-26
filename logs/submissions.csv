@@ -5,3 +5,5 @@ timestamp,tag,git_hash,val_macro_f05,public_score,change_note
 2026-09-25T20:45+05:30,v3_fr_strict,73c041f,0.9865,0.98092,v3 blend with France logit shifted -1 (India/US identical to v3); +0.00024 public vs v3 => France +0.0016
 2026-09-25T21:24+05:30,v4_stack_fr1,3f9ebbb,0.9871,0.982057,stacker over v2 LightGBM + CE base with S1-side and pool-side competition context + empty-address flag; France logit -1; +0.00114 public vs strict (India/US +0.0006 held-out => France ~+0.004)
 2026-09-25T23:01+05:30,v5_large_fr1,4c55d33,0.9877,0.983546,stacker + CE-large (49 feats) over v2 LightGBM + CE base; France -1; +0.00149 public vs v4 (India/US +0.0006 held-out => France ~+0.0065)
+2026-09-26T09:16+05:30,v8_full_all,870d535,0.9899,0.985143,stacker on 434k full-data fold-0 S1: LightGBM full + CE base + CE large + ce_full; France r1 CE in ce_large slot; France -1; held-out 0.9899 on v5 S1 set
+2026-09-26T09:22+05:30,v8c_fr0,b589b22,0.9899,0.985038,v8 with no France shift (India/US identical); -0.000105 vs v8 => France -1 still better than 0 (France ~-0.0007)

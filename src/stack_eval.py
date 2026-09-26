@@ -121,6 +121,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--extra", action="append", default=[], help="name=folder of an extra cross-encoder")
     ap.add_argument("--tag", default="sample")
+    ap.add_argument("--param_grid", action="store_true",
+                    help="stacker with all features under several LightGBM settings (leaves / learning rate)")
     ap.add_argument("--compare_extras", action="store_true",
                     help="only two stackers: with the first --extra only vs with all --extra (skip blends/pool/meta)")
     ap.add_argument("--s1_from", default="", help="glob of pair files: evaluate only their fold-0 S1s "
@@ -182,13 +184,13 @@ def main():
     y = df["label"].to_numpy()
     q = df["s1_id"].map({s: zlib.crc32(s.encode()) % 20 for s in ids}).to_numpy()
 
-    def oof_stack(M):
+    def oof_stack(M, params=STACK_PARAMS):
         oof = np.zeros(len(df))
         for k in (0, 5, 10, 15):
             te = q == k
             va_q = [x for x in (0, 5, 10, 15) if x != k][0]  # early stopping on one training quarter
             fit, va = ~te & (q != va_q), q == va_q
-            m = lgb.train(STACK_PARAMS, lgb.Dataset(M[fit], y[fit]), 3000, valid_sets=[lgb.Dataset(M[va], y[va])],
+            m = lgb.train(params, lgb.Dataset(M[fit], y[fit]), 5000, valid_sets=[lgb.Dataset(M[va], y[va])],
                           callbacks=[lgb.early_stopping(100, verbose=False)])
             oof[te] = m.predict(M[te], num_iteration=m.best_iteration)
         return oof
@@ -198,10 +200,18 @@ def main():
     hh = {s: zlib.crc32(s.encode()) % 10 for s in ids}
     halves = [[s for s in ids if hh[s] == 0], [s for s in ids if hh[s] == 5]]
     df["blend"] = X["blend"].to_numpy()
-    names = [] if args.compare_extras else ["blend"]
-    if extra and not args.compare_extras:
+    names = [] if (args.compare_extras or args.param_grid) else ["blend"]
+    if extra and not (args.compare_extras or args.param_grid):
         df["blend_all"] = X["blend_all"].to_numpy()
         names.append("blend_all")
+    if args.param_grid:
+        M = X.to_numpy()
+        for leaves, lr, mdl in ((31, 0.05, 100), (63, 0.05, 100), (127, 0.03, 200), (255, 0.03, 400)):
+            name = f"stack_l{leaves}_lr{lr}"
+            df[name] = oof_stack(M, dict(STACK_PARAMS, num_leaves=leaves, learning_rate=lr, min_data_in_leaf=mdl))
+            names.append(name)
+            print(f"  trained {name}", flush=True)
+        sets = {}
     for name, cols in sets.items():
         df[f"stack_{name}"] = oof_stack(X[cols].to_numpy())
         names.append(f"stack_{name}")

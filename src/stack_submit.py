@@ -43,6 +43,8 @@ def main():
     ap.add_argument("--features", default="pool", choices=["pool", "meta", "extra"])
     ap.add_argument("--extra", action="append", default=[], help="name=folder of an extra cross-encoder")
     ap.add_argument("--swap", default="", help="col=folder: replace <col>_prob on unseen-country test pairs")
+    ap.add_argument("--unseen_prob", default="", help="glob of parquet (s1_id, pool_id, prob): final probability "
+                    "for unseen-country S1 pairs (e.g. a France-specialised model); pairs not in it keep the stacker prob")
     ap.add_argument("--pairs", default="handoff/ce/train_pairs_part*.parquet", help="LightGBM OOF pair files (train)")
     ap.add_argument("--s1_from", default="", help="glob of pair files: train only on their fold-0 S1s")
     ap.add_argument("--lgbm_test", default="artefacts/test/probs_model_v2.parquet", help="LightGBM test prob files")
@@ -114,6 +116,18 @@ def main():
     del lg
     te["prob"] = m.predict(Xte[Xtr.columns])
     s1 = pd.read_parquet(os.path.join(art_dir(cfg, "test"), "s1.parquet"), columns=["entity_id", "country_norm"])
+    if args.unseen_prob:
+        tr_c = set(pd.read_parquet(os.path.join(art_dir(cfg, "train"), "s1.parquet"), columns=["country_norm"])["country_norm"])
+        unseen = set(s1.loc[~s1["country_norm"].isin(tr_c), "entity_id"])
+        up = pd.concat([pd.read_parquet(f, columns=["s1_id", "pool_id", "prob"]) for f in sorted(glob.glob(args.unseen_prob))])
+        up = up[up["s1_id"].isin(unseen)].drop_duplicates(["s1_id", "pool_id"])
+        new = te[["s1_id", "pool_id"]].merge(up, on=["s1_id", "pool_id"], how="left")["prob"].to_numpy()
+        # pairs only in the override file (not in the stacker table) are appended as new candidates
+        extra_rows = up.merge(te[["s1_id", "pool_id"]], on=["s1_id", "pool_id"], how="left", indicator=True)
+        extra_rows = extra_rows[extra_rows["_merge"] == "left_only"][["s1_id", "pool_id", "prob"]]
+        te["prob"] = np.where(np.isnan(new), te["prob"].to_numpy(), new)
+        te = pd.concat([te, extra_rows], ignore_index=True)
+        print(f"unseen_prob: {np.isfinite(new).sum():,} pairs overridden, {len(extra_rows):,} added", flush=True)
     if args.shift:
         c, delta = args.shift.split(":")
         in_c = te["s1_id"].isin(set(s1.loc[s1["country_norm"] == c, "entity_id"])).to_numpy()
