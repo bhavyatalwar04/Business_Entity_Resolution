@@ -48,6 +48,9 @@ def main():
     ap.add_argument("--lgbm_test", default="artefacts/test/probs_model_v2.parquet", help="LightGBM test prob files")
     ap.add_argument("--ce_fill", default="zero", choices=["zero", "lgbm"], help="train pairs without a CE score")
     args = ap.parse_args()
+    if os.name == "nt":  # keep full CPU when the laptop is locked (Windows EcoQoS)
+        from src.no_throttle import disable_throttling
+        disable_throttling()
     extra = dict(e.split("=") for e in args.extra) if args.features == "extra" else {}
     with open(args.config) as f:
         cfg = yaml.safe_load(f)

@@ -121,6 +121,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--extra", action="append", default=[], help="name=folder of an extra cross-encoder")
     ap.add_argument("--tag", default="sample")
+    ap.add_argument("--compare_extras", action="store_true",
+                    help="only two stackers: with the first --extra only vs with all --extra (skip blends/pool/meta)")
     ap.add_argument("--s1_from", default="", help="glob of pair files: evaluate only their fold-0 S1s "
                     "(e.g. the handoff sample, whose pairs all have CE scores)")
     ap.add_argument("--ce_fill", default="zero", choices=["zero", "lgbm"],
@@ -129,6 +131,9 @@ def main():
                     help="glob of LightGBM OOF pair files; handoff/full_out/oof_train_full_part*.parquet = all 2.2M "
                          "training S1, so candidate competition is complete (as on test)")
     args = ap.parse_args()
+    if os.name == "nt":  # keep full CPU when the laptop is locked (Windows EcoQoS)
+        from src.no_throttle import disable_throttling
+        disable_throttling()
     extra = dict(e.split("=") for e in args.extra)
     gold = load_ground_truth("dataset")
     files = sorted(glob.glob(args.pairs))
@@ -169,6 +174,11 @@ def main():
             "meta": [c for c in X.columns if c not in extra_cols]}
     if extra:
         sets["extra"] = list(X.columns)
+    if args.compare_extras:
+        later = list(extra)[1:]
+        drop = [c for c in X.columns if any(c.startswith(p) for e in later for p in (f"{e}_prob", f"ctx_{e}_prob"))
+                or c.startswith("blend_all") or c.startswith("ctx_blend_all")]
+        sets = {f"x_{list(extra)[0]}": [c for c in X.columns if c not in drop], "x_all": list(X.columns)}
     y = df["label"].to_numpy()
     q = df["s1_id"].map({s: zlib.crc32(s.encode()) % 20 for s in ids}).to_numpy()
 
@@ -188,8 +198,8 @@ def main():
     hh = {s: zlib.crc32(s.encode()) % 10 for s in ids}
     halves = [[s for s in ids if hh[s] == 0], [s for s in ids if hh[s] == 5]]
     df["blend"] = X["blend"].to_numpy()
-    names = ["blend"]
-    if extra:
+    names = [] if args.compare_extras else ["blend"]
+    if extra and not args.compare_extras:
         df["blend_all"] = X["blend_all"].to_numpy()
         names.append("blend_all")
     for name, cols in sets.items():

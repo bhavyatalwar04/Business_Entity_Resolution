@@ -11,6 +11,7 @@ and the rule is penalised more than it would be on test (where all S1s are prese
 Usage: python -m src.assign_eval --tag large --col stack_extra --alpha 2.0
 """
 import argparse
+import os
 import glob
 import zlib
 
@@ -42,6 +43,9 @@ def main():
     ap.add_argument("--pairs", default="handoff/ce/train_pairs_part*.parquet")
     ap.add_argument("--s1_from", default="", help="glob of pair files defining the evaluated fold-0 S1s")
     args = ap.parse_args()
+    if os.name == "nt":  # keep full CPU when the laptop is locked (Windows EcoQoS)
+        from src.no_throttle import disable_throttling
+        disable_throttling()
     gold = load_ground_truth("dataset")
     df = pd.read_parquet(f"artefacts/exp/stack_oof_{args.tag}.parquet")[["s1_id", "pool_id", args.col]]
     df = df.rename(columns={args.col: "prob"})

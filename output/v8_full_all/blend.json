@@ -1,0 +1,16 @@
+{
+ "model": "stack_extra",
+ "extra": {
+  "ce_large": "handoff/ce_large_out",
+  "ce_full": "handoff/ce_full_out"
+ },
+ "swap": "ce_large=handoff/ce_france_out",
+ "decision": {
+  "method": "expf",
+  "alpha": 1.5,
+  "one_to_one": true
+ },
+ "shift": "france:-1",
+ "pairs": "handoff/full_out/oof_train_full_part*.parquet",
+ "lgbm_test": "handoff/full_out/probs_model_full_part*.parquet"
+}

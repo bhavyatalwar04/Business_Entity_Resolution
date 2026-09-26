@@ -5,6 +5,7 @@ fold-0 S1s and scored on the other, both ways.
 Usage: python -m src.decision_eval [--tag sample] [--cols stack_pool,blend]
 """
 import argparse
+import os
 import glob
 import zlib
 
@@ -26,6 +27,9 @@ def main():
     ap.add_argument("--cols", default="stack_pool")
     ap.add_argument("--pairs", default="handoff/ce/train_pairs_part*.parquet", help="pair files defining the fold-0 S1s")
     args = ap.parse_args()
+    if os.name == "nt":  # keep full CPU when the laptop is locked (Windows EcoQoS)
+        from src.no_throttle import disable_throttling
+        disable_throttling()
     gold = load_ground_truth("dataset")
     df = pd.read_parquet(f"artefacts/exp/stack_oof_{args.tag}.parquet")
     # all fold-0 S1s of the pair table, including those without any pair >= 0.001 (they get empty predictions)
