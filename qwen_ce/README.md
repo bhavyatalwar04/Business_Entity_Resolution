@@ -61,6 +61,14 @@ Final submission family: **v11** = v8 stack + ONE Qwen3-4B-Base LoRA adapter (`c
 `final_models/qwen3_v11_adapter`). Total shipped params ~6.16B (v8 2.08B + Qwen3-4B 4.02B + LoRA 0.06B), under 8B.
 LB 0.986201. Any later file that beats it is v11 with a France-only change, documented in the build notes.
 
+**Best file so far: `subs-final` `output/v16_v11_s-1.25`, LB 0.986232** (27 Sep 19:27 IST, +0.000031 over v11).
+It is the v11 recipe unchanged except for the France decision shift: exactly the same models and weights,
+stacker, and India/US output as v11. Build config (`output/v16_v11_s-1.25/blend.json`):
+stacker `stack_extra` with extra CEs `ce_large` (swapped for `handoff/ce_france_out` on France), `ce_full`, and
+`qwen` = `handoff/ce_qwen_out` (adapter `final_models/qwen3_v11_adapter`); decision `expf`, alpha 1.5,
+one-to-one; shift `france:-1.25` (v11 used `france:-1`). Built on the HPC. The unzipped `matching_results.tsv`
+has md5 e8ba1a0fee1a186c2193a24570397aaa and 1,732,544 rows. Shipped params are the same as v11 (~6.16B).
+
 Tested on 26-27 Sep and NOT used (measured, with the number that decided it):
 
 | experiment | code here | result |
