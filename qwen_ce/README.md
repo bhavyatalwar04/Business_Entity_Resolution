@@ -68,6 +68,7 @@ stacker `stack_extra` with extra CEs `ce_large` (swapped for `handoff/ce_france_
 `qwen` = `handoff/ce_qwen_out` (adapter `final_models/qwen3_v11_adapter`); decision `expf`, alpha 1.5,
 one-to-one; shift `france:-1.25` (v11 used `france:-1`). Built on the HPC. The unzipped `matching_results.tsv`
 has md5 e8ba1a0fee1a186c2193a24570397aaa and 1,732,544 rows. Shipped params are the same as v11 (~6.16B).
+Stacker and decision commands for this file are in `BUILD_NOTES.md` on branch `subs-final` (commit 2807e9c).
 
 Tested on 26-27 Sep and NOT used (measured, with the number that decided it):
 
