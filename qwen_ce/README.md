@@ -61,7 +61,30 @@ Final submission family: **v11** = v8 stack + ONE Qwen3-4B-Base LoRA adapter (`c
 `final_models/qwen3_v11_adapter`). Total shipped params ~6.16B (v8 2.08B + Qwen3-4B 4.02B + LoRA 0.06B), under 8B.
 LB 0.986201. Any later file that beats it is v11 with a France-only change, documented in the build notes.
 
-**Best file so far: `subs-final` `output/v16_v11_s-1.25`, LB 0.986232** (27 Sep 19:27 IST, +0.000031 over v11).
+**FINAL: `output/v15_frself_s-1.25` (laptop build, unzipped md5 8b68aed84c39980832ca283d1f050748), LB 0.986509**
+(27 Sep 21:03 IST, +0.000308 over v11; implied France 0.9629 -> 0.9650; India/US byte-identical to v11).
+Same as v11 except that the Qwen feature on **France pairs only** comes from a France self-trained adapter, with France
+shift `france:-1.25` (count-matched). India/US Qwen scores still come from the v11 adapter.
+Shipped models: v8 stack (2.08B) + Qwen3-4B-Base (4.02B, one shared copy) + v11 LoRA (0.06B, `final_models/qwen3_v11_adapter`)
++ France self-train LoRA (0.06B, `final_models/qwen3_frself_adapter`, adapter_model.safetensors md5
+ff0c2b44ede8c3f5db70c4570ba30cd3) = ~6.22B, under 8B.
+
+France self-train adapter, reproduce (all from train labels + unlabelled test text; no test labels, no external data):
+```bash
+python prep_selftrain.py       # 3-teacher (lgbm_full, ce_full, v11 Qwen) one-to-one France pseudo-labels + equal IN/US labelled replay
+python prep_selftrain_sib.py   # + sibling hard negatives -> inputs/selftrain_fr.parquet
+# continue the v11 adapter 1 epoch, plain source-only training (domain head off), lr 1e-5  [run_frself.pbs]
+python qwen_dann.py --adapter out/adapter --max_lambda 0 --src_file inputs/selftrain_fr.parquet --target gate_fr_50k.parquet \
+    --lr 1e-5 --bs 64 --accum 2 --out out_frself
+# score every France test pair  [run_frselfsc.pbs]
+python qwen_score.py --adapter out_frself/adapter --pairs inputs/france_all.parquet --split test --stem ce_test_france --out out_frself_scores
+python pack_frcanon.py out_frself_scores handoff ce_qwen_frself_out   # v11 Qwen files with France scores replaced
+```
+Stacker/decision: the v11 recipe with `--extra qwen=handoff/ce_qwen_frself_out --shift france:-1.25`
+(`subs-final` `BUILD_NOTES.md`). Note: on our internal gate this adapter missed by 0.0001 (IN/US contested AUC -0.0011);
+it is used for France pairs only, so India/US output is unaffected.
+
+Previous best (now superseded): **`subs-final` `output/v16_v11_s-1.25`, LB 0.986232** (27 Sep 19:27 IST, +0.000031 over v11).
 It is the v11 recipe unchanged except for the France decision shift: exactly the same models and weights,
 stacker, and India/US output as v11. Build config (`output/v16_v11_s-1.25/blend.json`):
 stacker `stack_extra` with extra CEs `ce_large` (swapped for `handoff/ce_france_out` on France), `ce_full`, and
