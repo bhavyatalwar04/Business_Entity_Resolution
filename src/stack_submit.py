@@ -142,6 +142,11 @@ def main():
         te = pd.concat([te, extra_rows], ignore_index=True)
         print(f"unseen_prob: {np.isfinite(new).sum():,} pairs overridden, {len(extra_rows):,} added", flush=True)
     variants = [(args.out, None)]
+    shifts = {args.out: args.shift}
+    if args.shift and "," in args.shift:  # country:d1,d2,...: one submission per shift, written to <out>_s<d>
+        c, ds = args.shift.split(":")
+        variants = [(f"{args.out}_s{d}", None) for d in ds.split(",")]
+        shifts = {f"{args.out}_s{d}": f"{c}:{d}" for d in ds.split(",")}
     if args.unseen_mix:  # the stacker learned CE weights on seen countries; re-weight one CE on unseen ones
         mcol, ws = args.unseen_mix.split(":")
         variants = [(f"{args.out}_mix{w}", float(w)) for w in ws.split(",")]
@@ -150,12 +155,15 @@ def main():
         z_stack, z_col = logit(te["prob"].to_numpy()), logit(te[f"{mcol}_prob"].to_numpy())
     params_d = {"method": "expf", "alpha": args.alpha, "one_to_one": True}
     s1_ids = s1["entity_id"].tolist()
+    base_prob = te["prob"].to_numpy().copy()
     for out, w in variants:
+        te["prob"] = base_prob
         if w is not None:
             te["prob"] = np.where(in_u, 1 / (1 + np.exp(-((1 - w) * z_stack + w * z_col))), 1 / (1 + np.exp(-z_stack)))
             print(f"[{out}] unseen_mix {mcol} w={w} on {in_u.sum():,} pairs", flush=True)
-        if args.shift:
-            c, delta = args.shift.split(":")
+        shift = shifts.get(out, args.shift)
+        if shift:
+            c, delta = shift.split(":")
             in_c = te["s1_id"].isin(set(s1.loc[s1["country_norm"] == c, "entity_id"])).to_numpy()
             z = logit(te["prob"].to_numpy())
             te["prob"] = np.where(in_c, 1 / (1 + np.exp(-(z + float(delta)))), te["prob"].to_numpy())
@@ -164,7 +172,7 @@ def main():
                          extra_cands=te[["s1_id", "pool_id"]])
         with open(os.path.join(out, "blend.json"), "w") as f:
             json.dump({"model": f"stack_{args.features}", "extra": extra, "swap": args.swap, "decision": params_d,
-                       "shift": args.shift, "unseen_mix": args.unseen_mix, "mix_w": w, "pairs": args.pairs,
+                       "shift": shift, "unseen_mix": args.unseen_mix, "mix_w": w, "pairs": args.pairs,
                        "lgbm_test": args.lgbm_test}, f, indent=1)
 
 
