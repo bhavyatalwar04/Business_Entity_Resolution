@@ -1,5 +1,5 @@
 {
- "model": "Qwen3-4B-Base adapter #2 (seed 13 on train_seed2, v11 recipe) PART 1 (fold-0 only)",
+ "model": "Qwen3-4B-Base adapter #2 (seed 13 on train_seed2, v11 recipe)",
  "all": {
   "rows": 890838,
   "auc": 0.99073277693139,
