@@ -16,10 +16,11 @@ models and a LoRA-fine-tuned **Qwen3-4B-Base** classifier; (4) a **LightGBM stac
 and their per-entity / per-candidate competition context, followed by a metric-aware decision layer
 (one-to-one assignment plus expected-F0.5 set selection, empty set allowed).
 Held-out macro F0.5 on 434,574 training entities never seen by any model: **0.9903** (India 0.9906,
-US 0.9900). Public leaderboard: **0.986232**. France, which is absent from training, is handled by the
-same country-agnostic code plus two measured unseen-country adjustments: transductive self-training
-of one cross-encoder on unlabelled French test records, and a logit shift for over-confidence.
-Total model size **≈ 6.16B parameters** (limit 8B); all models are MIT or Apache-2.0.
+US 0.9900). Public leaderboard: **0.986509**. France, which is absent from training, is handled by the
+same country-agnostic code plus measured unseen-country adjustments: transductive self-training on
+unlabelled French test records (of one xlm-r cross-encoder and of the Qwen3-4B adapter, with
+same-name "sibling" hard negatives), and a logit shift for over-confidence.
+Total model size **≈ 6.22B parameters** (limit 8B); all models are MIT or Apache-2.0.
 
 ---
 
@@ -140,6 +141,7 @@ macro F0.5: stage 1 0.9794, stage 2 **0.9805** (300k S1).
 | xlm-roberta-large "full" | 560M | MIT | continued on 4M pairs from all 2.2M S1 | same |
 | xlm-roberta-large "France r1" | 560M | MIT | continued with transductive self-training on unlabelled French test records (600k confident pseudo-positives, 56k one-to-one decoys, 745k easy negatives, 1:1 labelled replay) | replaces the large model's score on France pairs |
 | Qwen3-4B-Base + LoRA (r=32, α=64) | 4.02B + 0.07B | Apache-2.0 | 1 epoch on 1.2M hard (contested) training pairs; sequence-classification head | contested pairs (all countries) and **all** France pairs; elsewhere the column takes the xlm-r-large "full" score, identically on train and test |
+| Qwen3-4B LoRA "France self-train" | +0.07B (same base) | Apache-2.0 | the adapter above continued 1 epoch (lr 1e-5) on 300k pairs: 108k French 3-teacher pseudo-labels (one-to-one positives, decoy/easy negatives), 42k **sibling hard negatives** (a pool record confidently owned by S1-A paired with a same-name S1-B in the same city at another address), 150k labelled India/US replay | replaces the Qwen score on France pairs only |
 
 **Stacker (`src/stack_submit.py`, LightGBM).** 65 features: every model score and its logit, blends,
 per-S1 context for each score (rank, gap to best, max, second, mass, count > 0.5), candidate-side
@@ -161,8 +163,8 @@ set, α = 1.5, tuned on held-out data. (3) **Unseen country:** on countries abse
 - **Held-out macro F0.5: 0.9903** (India 0.9906, US 0.9900) on the 434,574 fold-0 training S1s, scored
   by models that never saw them, with the exact formula of the problem statement (singletons included).
   The decision is tuned on one half and scored on the other, both ways.
-- **Public leaderboard: 0.986232.** Since India/US are measured offline, the leaderboard gives
-  France directly: LB ≈ 0.850·(India/US) + 0.150·(France), so France ≈ **0.963**.
+- **Public leaderboard: 0.986509.** Since India/US are measured offline, the leaderboard gives
+  France directly: LB ≈ 0.850·(India/US) + 0.150·(France), so France ≈ **0.965**.
 
 | Build | Held-out | LB | Implied France |
 |---|---|---|---|
@@ -171,7 +173,8 @@ set, α = 1.5, tuned on held-out data. (3) **Unseen country:** on countries abse
 | + xlm-r large (v5) | 0.9877 | 0.983546 | — |
 | LightGBM on all 2.2M S1 + full-data CE + France r1 (v8) | 0.9900 | 0.985143 | 0.958 |
 | + Qwen3-4B LoRA (v11) | 0.9903 | 0.986201 | 0.963 |
-| **v11 with France shift −1.25 (final)** | 0.9903 | **0.986232** | 0.963 |
+| v11 with France shift −1.25 | 0.9903 | 0.986232 | 0.963 |
+| **+ France self-trained Qwen adapter on France (final)** | 0.9903 | **0.986509** | 0.965 |
 
 ### 5.2 Generalisation to the unseen country (France)
 - **Proxy.** We trained models on India only and scored the US as if unseen. An India-trained
@@ -207,7 +210,7 @@ set, α = 1.5, tuned on held-out data. (3) **Unseen country:** on countries abse
 | Mixing Qwen's raw score into France, temperature re-calibration | proxy: monotone loss / +0.0001 |
 | French text canonicalisation, S2↔S3 triangle-consistency filter, per-pair rules | all hurt held-out or proxy |
 | Synthetic French pairs | AUC 0.75 / 0.63 against 0.97 for real pairs |
-| France self-training of Qwen3 at lr 3e-5 | India/US contested AUC −0.0022 (gate fail) |
+| France self-training of Qwen3 at lr 3e-5 (the lr 1e-5 run is in the final) | India/US contested AUC −0.0022 (gate fail) |
 
 ---
 
@@ -215,7 +218,7 @@ set, α = 1.5, tuned on held-out data. (3) **Unseen country:** on countries abse
 Blocking with a fine-tuned dense retriever (99 % recall at ~25 candidates), a feature-rich LightGBM on
 all training data, cross-encoder re-scoring and a competition-aware stacker take held-out macro F0.5 to
 0.990. The unseen country is the real difficulty: India/US saturate near 0.990, while France reached
-~0.963. The biggest lessons: measure blocking against the full pool; exploit the one-to-one and
+~0.965 (Qwen3-4B +0.0054, then France self-training with sibling hard negatives +0.0021). The biggest lessons: measure blocking against the full pool; exploit the one-to-one and
 same-country structure; judge unseen-country changes by leaderboard-implied France, not by held-out
 scores, because India/US gains did not predict France (Qwen3.5 was better on India/US and worse on
 France); and validate every adaptation trick on a leave-one-country-out proxy before spending a
@@ -232,11 +235,11 @@ Repository `Business_Entity_Resolution` (branch `main`; build notes for the fina
 - Blocking, features, LightGBM: `python -m src.run --stage <stage> --split <train|test>`, configs in `configs/`.
 - Cross-encoders: `src/ce_rescore.py`, `jobs/ce_full.py`, `jobs/ce_france.py`; Qwen: `qwen_ce/qwen_ce.py`, `qwen_ce/qwen_score.py`.
 - Held-out evaluation of the stacker: `python -m src.stack_eval --pairs "handoff/full_out/oof_train_full_part*.parquet" --extra ce_large=… --extra ce_full=… --extra qwen=… --fill qwen=ce_full --compare_extras --only_all`.
-- Final file: `python -m src.stack_submit --features extra --extra ce_large=handoff/ce_large_out --extra ce_full=handoff/ce_full_out --extra qwen=handoff/ce_qwen_out --fill qwen=ce_full --pairs "handoff/full_out/oof_train_full_part*.parquet" --lgbm_test "handoff/full_out/probs_model_full_part*.parquet" --swap ce_large=handoff/ce_france_out --shift france:-1.25 --alpha 1.5 --out output/final`.
+- Final file: `python -m src.stack_submit --features extra --extra ce_large=handoff/ce_large_out --extra ce_full=handoff/ce_full_out --extra qwen=handoff/ce_qwen_frself_out --fill qwen=ce_full --pairs "handoff/full_out/oof_train_full_part*.parquet" --lgbm_test "handoff/full_out/probs_model_full_part*.parquet" --swap ce_large=handoff/ce_france_out --shift france:-1.25 --alpha 1.5 --out output/final`.
 - Unseen-country proxy: `src/proxy_eval.py`, `src/ce_dann_local.py`. Validator: `utils/validate_submission.py`.
 
 **Models and parameter count:** multilingual-e5-small 118M (MIT) + xlm-roberta-base 278M (MIT) +
-3 × xlm-roberta-large 560M (MIT) + Qwen3-4B-Base 4.02B (Apache-2.0) + LoRA 0.07B ≈ **6.16B** (< 8B).
+3 × xlm-roberta-large 560M (MIT) + Qwen3-4B-Base 4.02B (Apache-2.0) + 2 LoRA adapters 0.13B ≈ **6.22B** (< 8B).
 LightGBM (MIT) models are negligible. No external data, APIs, geocoding or lookups; all pseudo-labels
 come from our own models on the provided test candidates.
 
