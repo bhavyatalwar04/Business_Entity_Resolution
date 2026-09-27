@@ -19,7 +19,7 @@ Previous best (kept for reference): `output/v16_v11_s-1.25`, LB 0.986232, md5 `e
 It is the v11 recipe (LB 0.986201) with only the France decision moved: logit shift −1.25 instead of −1 on France
 (unseen-country) pairs. India/US decisions are identical to the v11 recipe.
 
-## Models (all MIT / Apache-2.0; total ≈ 6.16 B parameters)
+## Models (all MIT / Apache-2.0; total ≈ 6.22 B parameters for the final)
 | Component | Params | Source |
 |---|---|---|
 | multilingual-e5-small (fine-tuned blocker) | 0.12 B | `src/embed.py`, `src/finetune_embed.py` |
@@ -27,7 +27,8 @@ It is the v11 recipe (LB 0.986201) with only the France decision moved: logit sh
 | xlm-roberta-large CE (`ce_large`) | 0.56 B | branch `ce-large` |
 | xlm-roberta-large CE continued on full data (`ce_full`) | 0.56 B | branch `ce-full` |
 | xlm-roberta-large France self-trained r1 (`ce_france`, swapped in for France) | 0.56 B | branch `ce-france` |
-| Qwen3-4B-Base cross-encoder, LoRA r=32 (`qwen`) | 4.02 B + 0.07 B | branch `ce-qwen`, `qwen_ce/` (README there) |
+| Qwen3-4B-Base cross-encoder, LoRA r=32 (`qwen`, India/US scores) | 4.02 B + 0.07 B | branch `ce-qwen`, `qwen_ce/` (README there); weights `final_models/qwen3_v11_adapter` |
+| France self-trained LoRA adapter on the SAME Qwen3-4B base (France scores only) | + 0.07 B | `final_models/qwen3_frself_adapter` (adapter_model.safetensors md5 ff0c2b44ede8c3f5db70c4570ba30cd3) |
 | LightGBM ranker + LightGBM stacker | negligible | `src/run.py`, `src/stack_submit.py` |
 
 ## Exact build (run from the repo root, CPU only)
