@@ -1,0 +1,39 @@
+#!/bin/bash
+#PBS -N tri
+#PBS -j oe
+#PBS -q gpu
+#PBS -l select=1:ncpus=8:ngpus=1:mem=32gb
+#PBS -l walltime=03:00:00
+# TransClean-style triangle check (arXiv 2506.04006): score Source2-vs-Source3 candidate pairs that share a Source-1
+# entity with the v11 Qwen3 adapter (Record A = S2 record, Record B = S3 record). fold-0 (India/US, to tune the rule on
+# labels) + all France test triangles. Output: out_tri/{tri_fold0,tri_fr}_part*.parquet (s1_id=S2 id, pool_id=S3 id, ce_prob)
+cd $PBS_O_WORKDIR; exec > logs/tri_${PBS_JOBID%%.*}.log 2>&1
+export OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=true HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+if [ -z "$CUDA_VISIBLE_DEVICES" ]; then
+  HOST=$(hostname -s); JOB=${PBS_JOBID%%.*}
+  exec 9>~/.gpu_claims.lock; flock 9
+  touch ~/.gpu_claims
+  while read -r h g j; do qstat "$j" >/dev/null 2>&1 && echo "$h $g $j"; done < ~/.gpu_claims > ~/.gpu_claims.new
+  mv ~/.gpu_claims.new ~/.gpu_claims
+  CLAIMED=$(awk -v h="$HOST" '$1==h{print $2}' ~/.gpu_claims | paste -sd'|')
+  BUSY_UUIDS=$(nvidia-smi --query-compute-apps=gpu_uuid --format=csv,noheader | sort -u | paste -sd'|')
+  # Shared GPUs fill up without warning: only take a GPU with >= MINFREE MiB free, waiting up to 60 min for one.
+  MINFREE=${MINFREE:-60000}
+  for try in $(seq 1 60); do
+    GPU=$(nvidia-smi --query-gpu=index,uuid,memory.used,memory.free --format=csv,noheader,nounits | tr -d ' ' |
+          awk -F, -v c="^(${CLAIMED:-none})$" -v b="${BUSY_UUIDS:-none}" -v m="$MINFREE" '$1 !~ c && $4 >= m {print (index(b,$2)>0 ? 1 : 0) "," $3 "," $1}' |
+          sort -t, -k1,1n -k2,2n | head -1 | cut -d, -f3)
+    [ -n "$GPU" ] && break
+    echo "no GPU with >= ${MINFREE} MiB free (try $try), waiting 60 s"; sleep 60
+    BUSY_UUIDS=$(nvidia-smi --query-compute-apps=gpu_uuid --format=csv,noheader | sort -u | paste -sd'|')
+  done
+  [ -z "$GPU" ] && { echo "no GPU free after 60 min, giving up"; flock -u 9; exit 3; }
+  echo "$HOST $GPU $JOB" >> ~/.gpu_claims
+  flock -u 9
+  export CUDA_VISIBLE_DEVICES=$GPU
+fi
+echo "host $(hostname -s) | using GPU $CUDA_VISIBLE_DEVICES: $(nvidia-smi -i $CUDA_VISIBLE_DEVICES --query-gpu=name,memory.used --format=csv,noheader) | job $PBS_JOBID | ncpus $NCPUS | args: $ARGS"
+PY=~/.conda/envs/minor-project/bin/python
+$PY -u qwen_score.py --pairs inputs/tri_fold0_pairs.parquet --split train --stem tri_fold0 --out $PWD/out_tri --eval_bs 512
+$PY -u qwen_score.py --pairs inputs/tri_fr_pairs.parquet --split test --stem tri_fr --out $PWD/out_tri --eval_bs 512
+echo "tri done"

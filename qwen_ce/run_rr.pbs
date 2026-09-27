@@ -1,0 +1,64 @@
+#!/bin/bash
+#PBS -N rr_duo
+#PBS -j oe
+#PBS -q gpu
+#PBS -l select=1:ncpus=12:ngpus=2:mem=64gb
+#PBS -l walltime=14:00:00
+# Two GPU tasks in one job (gpu queue caps RUNNING JOBS per user, not GPUs), agreed in the room (#345-#347):
+#   GPU a: Qwen3-Reranker-4B LoRA CE (reranker_short prompt, score head = its yes/no rows) -> fold-0 + contested test,
+#          then France-all scores
+#   GPU b: bge-reranker-v2-m3 full fine-tune (sentence-pair input) -> fold-0 + contested test, France-all scores;
+#          then Qwen3.5 #1 (job $Q35_JOB) France-all scores once its adapter is DONE
+cd $PBS_O_WORKDIR; exec > logs/rr_duo_${PBS_JOBID%%.*}.log 2>&1
+export OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 RAYON_NUM_THREADS=6
+export PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=true HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+PY=~/.conda/envs/minor-project/bin/python
+
+# pick a GPU with >= $1 MiB free not claimed on this host (lock on ~/.gpu_claims), waiting up to 60 min
+pick() {
+  local MIN=$1 HOST=$(hostname -s) JOB=${PBS_JOBID%%.*} GPU="" try
+  exec 9>~/.gpu_claims.lock; flock 9
+  touch ~/.gpu_claims
+  while read -r h g j; do qstat "$j" >/dev/null 2>&1 && echo "$h $g $j"; done < ~/.gpu_claims > ~/.gpu_claims.new
+  mv ~/.gpu_claims.new ~/.gpu_claims
+  for try in $(seq 1 60); do
+    local CLAIMED=$(awk -v h="$HOST" '$1==h{print $2}' ~/.gpu_claims | paste -sd'|')
+    local BUSY=$(nvidia-smi --query-compute-apps=gpu_uuid --format=csv,noheader | sort -u | paste -sd'|')
+    GPU=$(nvidia-smi --query-gpu=index,uuid,memory.used,memory.free --format=csv,noheader,nounits | tr -d ' ' |
+          awk -F, -v c="^(${CLAIMED:-none})$" -v b="${BUSY:-none}" -v m="$MIN" '$1 !~ c && $4 >= m {print (index(b,$2)>0 ? 1 : 0) "," $3 "," $1}' |
+          sort -t, -k1,1n -k2,2n | head -1 | cut -d, -f3)
+    [ -n "$GPU" ] && break
+    echo "no GPU with >= $MIN MiB free (try $try), waiting 60 s" >&2; sleep 60
+  done
+  [ -n "$GPU" ] && echo "$HOST $GPU $JOB" >> ~/.gpu_claims
+  flock -u 9; exec 9>&-
+  echo "$GPU"
+}
+
+GA=$(pick 60000); [ -z "$GA" ] && { echo "no GPU for the reranker"; exit 3; }
+GB=$(pick 40000); [ -z "$GB" ] && { echo "no GPU for bge"; exit 3; }
+echo "host $(hostname -s) | job $PBS_JOBID | Reranker-4B on GPU $GA | bge-m3 + Qwen3.5 France on GPU $GB"
+nvidia-smi --query-gpu=index,memory.used,memory.free --format=csv,noheader
+
+RR=/home/rudra.120437/models/Qwen3-Reranker-4B
+BGE=/home/rudra.120437/models/bge-reranker-v2-m3
+Q35=/home/rudra.120437/models/Qwen3.5-4B-Base-text
+( export CUDA_VISIBLE_DEVICES=$GA
+  $PY -u qwen_ce.py --model $RR --prompt reranker_short --init_yesno --max_len 160 --accum 2 --reserve_gb 50 \
+      --out $PWD/out_rr4b > logs/rr4b_${PBS_JOBID%%.*}.log 2>&1 &&
+  $PY -u qwen_score.py --model $RR --adapter $PWD/out_rr4b/adapter --prompt reranker_short --max_len 160 \
+      --pairs inputs/france_all.parquet --split test --stem ce_test_france --out $PWD/out_rr4b_scores >> logs/rr4b_${PBS_JOBID%%.*}.log 2>&1
+  echo "Reranker-4B branch exit $?" ) &
+( export CUDA_VISIBLE_DEVICES=$GB
+  $PY -u qwen_ce.py --model $BGE --prompt pair --full_ft --lr 2e-5 --max_len 128 --eval_bs 512 --save_every 5000 \
+      --reserve_gb 20 --out $PWD/out_bge > logs/bge_${PBS_JOBID%%.*}.log 2>&1 &&
+  $PY -u qwen_score.py --model $BGE --adapter $PWD/out_bge/adapter --prompt pair --max_len 128 --eval_bs 512 \
+      --pairs inputs/france_all.parquet --split test --stem ce_test_france --out $PWD/out_bge_scores >> logs/bge_${PBS_JOBID%%.*}.log 2>&1
+  echo "bge branch exit $?"
+  while [ ! -f out_q35/adapter/DONE ]; do qstat $Q35_JOB >/dev/null 2>&1 || break; sleep 120; done; sleep 60
+  [ -f out_q35/adapter/DONE ] || { echo "Qwen3.5 #1 never finished, no France scoring"; exit; }
+  PYTHONPATH=$PWD/pylib_tri $PY -u qwen_score.py --model $Q35 --adapter $PWD/out_q35/adapter \
+      --pairs inputs/france_all.parquet --split test --stem ce_test_france --out $PWD/out_q35_scores > logs/q35fr_${PBS_JOBID%%.*}.log 2>&1
+  echo "France-all (Qwen3.5 #1) exit $?" ) &
+wait
+echo "all done"

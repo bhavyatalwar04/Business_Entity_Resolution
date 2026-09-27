@@ -1,0 +1,34 @@
+#!/bin/bash
+#PBS -N qwen4b_ce
+#PBS -j oe
+#PBS -q gpu
+#PBS -l select=1:ncpus=8:ngpus=1:mem=24gb
+#PBS -l walltime=10:00:00
+# Qwen3-4B-Base cross-encoder (LoRA). Extra args for qwen_ce.py via: qsub -v ARGS="..." run_qwen.pbs
+# Resumes automatically from out/ckpt.pt (or skips training if out/adapter/DONE exists).
+# Measured use of job 39016: ~19 GB RAM, ~73 GB GPU memory.
+cd $PBS_O_WORKDIR; exec > logs/qwen4b_ce_${PBS_JOBID%%.*}.log 2>&1   # PBS -o only appears at job end
+export N_CPUS=${NCPUS:-8} OMP_NUM_THREADS=${NCPUS:-8} RAYON_NUM_THREADS=${NCPUS:-8} MKL_NUM_THREADS=${NCPUS:-8}
+export PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=true HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+
+# GPU pick, same procedure as the team's jobs/pick_gpu.sh: under a lock on ~/.gpu_claims, prune claims of
+# finished jobs, drop GPUs claimed on this host, then prefer a GPU with no compute process, else least memory used.
+# Claims of other users (hpc/arnav) are mirrored in the collab shared-context key "gpu-claims".
+if [ -z "$CUDA_VISIBLE_DEVICES" ]; then
+  HOST=$(hostname -s); JOB=${PBS_JOBID%%.*}
+  exec 9>~/.gpu_claims.lock; flock 9
+  touch ~/.gpu_claims
+  while read -r h g j; do qstat "$j" >/dev/null 2>&1 && echo "$h $g $j"; done < ~/.gpu_claims > ~/.gpu_claims.new
+  mv ~/.gpu_claims.new ~/.gpu_claims
+  CLAIMED=$(awk -v h="$HOST" '$1==h{print $2}' ~/.gpu_claims | paste -sd'|')
+  BUSY_UUIDS=$(nvidia-smi --query-compute-apps=gpu_uuid --format=csv,noheader | sort -u | paste -sd'|')
+  GPU=$(nvidia-smi --query-gpu=index,uuid,memory.used --format=csv,noheader,nounits | tr -d ' ' |
+        awk -F, -v c="^(${CLAIMED:-none})$" -v b="${BUSY_UUIDS:-none}" '$1 !~ c {print (index(b,$2)>0 ? 1 : 0) "," $3 "," $1}' |
+        sort -t, -k1,1n -k2,2n | head -1 | cut -d, -f3)
+  echo "$HOST $GPU $JOB" >> ~/.gpu_claims
+  flock -u 9
+  export CUDA_VISIBLE_DEVICES=$GPU
+fi
+echo "host $(hostname -s) | using GPU $CUDA_VISIBLE_DEVICES: $(nvidia-smi -i $CUDA_VISIBLE_DEVICES --query-gpu=name,memory.used --format=csv,noheader) | job $PBS_JOBID | ncpus $NCPUS | args: $ARGS"
+
+~/.conda/envs/minor-project/bin/python -u qwen_ce.py $ARGS
