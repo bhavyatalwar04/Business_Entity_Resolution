@@ -1,7 +1,20 @@
 # Submission build notes (branch `subs-final`)
 
-Best leaderboard file: **`output/v16_v11_s-1.25/matching_results.tsv.gz`**, LB **0.986232** (27 Sep 2026, 19:2x IST).
-md5 of the uncompressed TSV: `e8ba1a0fee1a186c2193a24570397aaa`.
+## FINAL (best LB): `v15_frself_s-1.25`, LB **0.986509** (uploaded 27 Sep 2026 21:03 IST, laptop build, md5 `8b68aed84c39980832ca283d1f050748`)
+The v11 recipe with the Qwen3 cross-encoder's FRANCE scores replaced by a France self-trained adapter (India/US
+byte-identical to v11), France logit shift −1.25. Implied France F0.5 ≈ 0.9650 vs v11's 0.9629.
+HPC build of the same recipe: `output/v15_frself_s-1.25` on this branch (md5 `8c3d2b13c13e80e3f6f22d1c23e17ccc`,
+not uploaded; differs only by LightGBM thread/platform nondeterminism).
+
+France self-training (Qwen side; code + exact commands in branch `ce-qwen`, `qwen_ce/README.md`):
+- start from the v11 Qwen3-4B LoRA adapter; 1 epoch, lr 1e-5 (`qwen_dann.py --max_lambda 0`, i.e. no domain loss)
+- data (`prep_selftrain.py` + `prep_selftrain_sib.py`, 300k pairs): 108k France pairs where lgbm_full, ce_full and
+  Qwen3 all agree (positives one-to-one), 42k SIBLING hard negatives (a pool record confidently owned by S1-A, all 3
+  models >= 0.98, paired with a same-core-name sibling S1-B at another address), 150k labelled India/US replay pairs
+- France-all rescore -> `handoff/ce_qwen_frself_out` (v11 Qwen3 files with only France scores replaced)
+Build: same as below with `--extra qwen=handoff/ce_qwen_frself_out --shift france:-1.25`.
+
+Previous best (kept for reference): `output/v16_v11_s-1.25`, LB 0.986232, md5 `e8ba1a0fee1a186c2193a24570397aaa`.
 
 It is the v11 recipe (LB 0.986201) with only the France decision moved: logit shift −1.25 instead of −1 on France
 (unseen-country) pairs. India/US decisions are identical to the v11 recipe.
@@ -51,6 +64,7 @@ count / platform (~650 France pairs between the laptop and HPC builds of v11); I
 | v14_ens2_s-0.5 | Qwen3 v11 + adapter #2 logit-averaged | 0.985777 |
 | **v16_v11_s-1.25** (HPC build, md5 e8ba1a0f…) | France shift −1 → −1.25 | **0.986232** |
 | v11s_fr15 (laptop build, md5 22f5d7d1…) | France shift −1 → −1.5 | 0.98615 |
+| **v15_frself_s-1.25** (laptop build, md5 8b68aed8…) | France Qwen scores from the France self-trained adapter, shift −1.25 | **0.986509** |
 
 France shift curve on the v11 recipe: −1 → 0.986201, −1.25 → 0.986232, −1.5 → 0.98615, so the optimum is ≈ −1.25.
 The −1.25 gain (+0.000031) is within the ~±0.0001 laptop/HPC platform noise; the selected final is the exact file that scored (HPC build).
