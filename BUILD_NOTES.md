@@ -49,4 +49,8 @@ count / platform (~650 France pairs between the laptop and HPC builds of v11); I
 | v11 (26 Sep) | — | 0.986201 |
 | v13_q35_s-0.25 | Qwen3.5-4B replaces Qwen3-4B | 0.985613 |
 | v14_ens2_s-0.5 | Qwen3 v11 + adapter #2 logit-averaged | 0.985777 |
-| **v16_v11_s-1.25** | France shift −1 → −1.25 | **0.986232** |
+| **v16_v11_s-1.25** (HPC build, md5 e8ba1a0f…) | France shift −1 → −1.25 | **0.986232** |
+| v11s_fr15 (laptop build, md5 22f5d7d1…) | France shift −1 → −1.5 | 0.98615 |
+
+France shift curve on the v11 recipe: −1 → 0.986201, −1.25 → 0.986232, −1.5 → 0.98615, so the optimum is ≈ −1.25.
+The −1.25 gain (+0.000031) is within the ~±0.0001 laptop/HPC platform noise; the selected final is the exact file that scored (HPC build).
