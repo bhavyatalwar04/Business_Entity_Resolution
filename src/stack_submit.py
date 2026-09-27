@@ -43,6 +43,8 @@ def main():
     ap.add_argument("--features", default="pool", choices=["pool", "meta", "extra"])
     ap.add_argument("--extra", action="append", default=[], help="name=folder of an extra cross-encoder")
     ap.add_argument("--swap", default="", help="col=folder: replace <col>_prob on unseen-country test pairs")
+    ap.add_argument("--save_probs", action="store_true", help="also write <out>/test_probs_unseen.parquet "
+                    "(s1_id, pool_id, prob) for unseen-country S1, final probs after shift (for src.tri_filter apply)")
     ap.add_argument("--unseen_prob", default="", help="glob of parquet (s1_id, pool_id, prob): final probability "
                     "for unseen-country S1 pairs (e.g. a France-specialised model); pairs not in it keep the stacker prob")
     ap.add_argument("--pairs", default="handoff/ce/train_pairs_part*.parquet", help="LightGBM OOF pair files (train)")
@@ -168,6 +170,13 @@ def main():
             z = logit(te["prob"].to_numpy())
             te["prob"] = np.where(in_c, 1 / (1 + np.exp(-(z + float(delta)))), te["prob"].to_numpy())
             print(f"shifted logit by {delta} on {in_c.sum():,} pairs of country {c}", flush=True)
+        if args.save_probs:
+            seen_c = set(pd.read_csv("dataset/train/train_source1.tsv", sep="\t", dtype=str, usecols=["country"])["country"])
+            unseen_ids = set(s1.loc[~s1["country"].isin(seen_c), "entity_id"]) if "country" in s1.columns else \
+                set(s1.loc[s1["country_norm"] == "france", "entity_id"])
+            os.makedirs(out, exist_ok=True)
+            te.loc[te["s1_id"].isin(unseen_ids), ["s1_id", "pool_id", "prob"]].to_parquet(
+                os.path.join(out, "test_probs_unseen.parquet"), index=False)
         write_submission(cfg, s1_ids, decide(te[["s1_id", "pool_id", "prob"]], s1_ids, params_d), out,
                          extra_cands=te[["s1_id", "pool_id"]])
         with open(os.path.join(out, "blend.json"), "w") as f:
