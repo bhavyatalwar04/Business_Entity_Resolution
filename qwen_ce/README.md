@@ -54,3 +54,23 @@ Each `qwen_score.py` call takes the same `--model` / `--prompt` / `--max_len` as
 
 Recipe for every model: 1 epoch over the 1.2M train pairs, batch 64, AdamW (LoRA lr 1e-4, full fine-tune 2e-5), linear
 schedule with 3% warm-up, max length 128 tokens (160 for the reranker template), bf16 autocast, seed 7.
+
+## Status at the 27 Sep 2026 freeze
+
+Final submission family: **v11** = v8 stack + ONE Qwen3-4B-Base LoRA adapter (`ce_qwen_out`, adapter in
+`final_models/qwen3_v11_adapter`). Total shipped params ~6.16B (v8 2.08B + Qwen3-4B 4.02B + LoRA 0.06B), under 8B.
+LB 0.986201. Any later file that beats it is v11 with a France-only change, documented in the build notes.
+
+Tested on 26-27 Sep and NOT used (measured, with the number that decided it):
+
+| experiment | code here | result |
+|---|---|---|
+| Qwen3.5-4B (text-only) replacing Qwen3 | `make_text_only.py`, `run_train.pbs` | LB 0.985613 (France -0.0034) |
+| Qwen3.5 adapter #2 | `run_second.pbs` | contested AUC 0.8987 < 0.9025 |
+| Qwen3-Reranker-4B (yes/no head init) | `prompts.py` reranker_short, `run_rr.pbs` | contested 0.9027 = Qwen3 level |
+| bge-reranker-v2-m3 (full fine-tune) | `run_rr.pbs` | stacker held-out 0.9902 < 0.9903 |
+| Qwen3 adapter #2 (train_seed2) ensemble | `run_second.pbs` | LB 0.985777 (France -0.0028) |
+| Qwen3 adapter #3 (train_seed3) | `prep_seed3.py` | contested 0.8680; hurts every ensemble |
+| France text canonicalisation (fr_canon.py v1/v2/keep) | `run_frcanon.pbs`, `gate_frcanon.py` | all variants FAIL the gate |
+| TransClean triangle S2xS3 consistency | `run_tri.pbs`, `tri_sim.py` | stacker-level: no threshold beats no-filter |
+| France self-training (3-teacher pseudo-labels + sibling negatives) | `prep_selftrain*.py`, `qwen_dann.py --max_lambda 0`, `run_frself*.pbs` | lr 1e-5: gate borderline (IN/US contested -0.0011); lr 3e-5: FAIL (-0.0022) |
