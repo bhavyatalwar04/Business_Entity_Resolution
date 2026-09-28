@@ -1,4 +1,8 @@
-# Exact environment used for the submitted results (Python 3.13.12, Windows 11, CUDA 12.4).
+# Stage 1 (normalise / blocking / LightGBM) and stage 4 (stacker + decision), pinned.
+# Used on Python 3.13.12 (Windows 11, CUDA 12.4) and Python 3.12.14 (Linux HPC, CUDA 12.4) with these versions.
+# Cross-encoder stages have their own pinned GPU environments:
+#   stage 2 (xlm-roberta): src/xlmr_ce/requirements-gpu.txt
+#   stage 3 (Qwen3-4B):    src/qwen_ce/requirements-gpu.txt
 # GPU build of torch:  pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
 pandas==3.0.2
 numpy==2.4.4
