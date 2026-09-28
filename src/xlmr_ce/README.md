@@ -14,6 +14,8 @@ P(same business). All four are MIT-licensed xlm-roberta models (no external data
 model.safetensors md5: base `0c182b869f01c249ca3b417872524b0d` · large `4750cdca081f1fd0286f0e71a51abdb3` ·
 full `05f17f21e5022753132f506b5a01a1f8` · france `2f85641f4eb034a02a1d4b8d718d0e60`.
 
+Pinned environment: `src/xlmr_ce/requirements-gpu.txt` (Python 3.12.14, torch 2.6.0+cu124, transformers 5.6.0).
+
 Common recipe (all four): `AutoModelForSequenceClassification(num_labels=1)`, BCE-with-logits, bf16 autocast on an
 NVIDIA H100 80 GB, AdamW (weight decay 0.01), 5% linear warmup + linear decay, 1 epoch, grad-clip 1.0, max_len 128,
 seed 42, texts tokenised as a pair (S1 text, candidate text).
