@@ -42,8 +42,9 @@ def main():
         for f in sorted(glob.glob(f"src/{sub}/**/*", recursive=True)):
             if os.path.isfile(f) and "__pycache__" not in f:
                 files[f"{pkg}/{f}"] = f
-    for f in sorted(glob.glob("configs/*.yaml")) + sorted(glob.glob("scripts/*")):
-        files[f"{pkg}/{f}"] = f
+    for f in sorted(glob.glob("configs/*.yaml")) + sorted(glob.glob("scripts/**/*", recursive=True)):
+        if os.path.isfile(f):
+            files[f"{pkg}/{f}"] = f
     missing = [src for src in files.values() if not os.path.exists(src)]
     if missing:
         raise SystemExit(f"missing files: {missing}")
