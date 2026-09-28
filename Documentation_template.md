@@ -141,7 +141,7 @@ macro F0.5: stage 1 0.9794, stage 2 **0.9805** (300k S1).
 | xlm-roberta-large "full" | 560M | MIT | continued on 4M pairs from all 2.2M S1 | same |
 | xlm-roberta-large "France r1" | 560M | MIT | continued with transductive self-training on unlabelled French test records (600k confident pseudo-positives, 56k one-to-one decoys, 745k easy negatives, 1:1 labelled replay) | replaces the large model's score on France pairs |
 | Qwen3-4B-Base + LoRA (r=32, α=64) | 4.02B + 0.07B | Apache-2.0 | 1 epoch on 1.2M hard (contested) training pairs; sequence-classification head | contested pairs (all countries) and **all** France pairs; elsewhere the column takes the xlm-r-large "full" score, identically on train and test |
-| Qwen3-4B LoRA "France self-train" | +0.07B (same base) | Apache-2.0 | the adapter above continued 1 epoch (lr 1e-5) on 300k pairs: 108k French 3-teacher pseudo-labels (one-to-one positives, decoy/easy negatives), 42k **sibling hard negatives** (a pool record confidently owned by S1-A paired with a same-name S1-B in the same city at another address), 150k labelled India/US replay | replaces the Qwen score on France pairs only |
+| Qwen3-4B LoRA "France self-train" | +0.07B (same base) | Apache-2.0 | the adapter above continued 1 epoch (lr 1e-5) on 300k pairs: 108k French 3-teacher pseudo-labels (one-to-one positives, decoy/easy negatives), 42k **sibling hard negatives** (a pool record confidently owned by S1-A paired with a sibling S1-B that has the same core name (legal-form tokens removed) at a different address; dropped if any teacher scores the sibling pair >= 0.5), 150k labelled India/US replay | replaces the Qwen score on France pairs only |
 
 **Stacker (`src/stack_submit.py`, LightGBM).** 65 features: every model score and its logit, blends,
 per-S1 context for each score (rank, gap to best, max, second, mass, count > 0.5), candidate-side
@@ -230,10 +230,11 @@ scoring for same-name siblings.
 ## Appendix
 
 ### A. Code Artefacts
-Repository `Business_Entity_Resolution` (branch `main`; build notes for the final file on branch
-`subs-final`, `BUILD_NOTES.md`; Qwen training code on branch `ce-qwen`, folder `qwen_ce/`).
+Everything is in `code/business_entity_resolution/` of this ZIP (repository `Business_Entity_Resolution`, branch
+`package`; build notes for the final file on branch `subs-final`, `BUILD_NOTES.md`).
 - Blocking, features, LightGBM: `python -m src.run --stage <stage> --split <train|test>`, configs in `configs/`.
-- Cross-encoders: `src/ce_rescore.py`, `jobs/ce_full.py`, `jobs/ce_france.py`; Qwen: `qwen_ce/qwen_ce.py`, `qwen_ce/qwen_score.py`.
+- xlm-roberta cross-encoders: `src/xlmr_ce/ce_rescore.py` (base, large), `src/xlmr_ce/ce_full.py`, `src/xlmr_ce/ce_france.py`, `src/xlmr_ce/ce_extra.py` (README in `src/xlmr_ce/`).
+- Qwen3-4B cross-encoder: `src/qwen_ce/qwen_ce.py` (v11 adapter), `src/qwen_ce/prep_selftrain.py` + `prep_selftrain_sib.py` + `qwen_dann.py --max_lambda 0` (France self-trained adapter), `src/qwen_ce/qwen_score.py`, `pack_frcanon.py` (README in `src/qwen_ce/`).
 - Held-out evaluation of the stacker: `python -m src.stack_eval --pairs "handoff/full_out/oof_train_full_part*.parquet" --extra ce_large=… --extra ce_full=… --extra qwen=… --fill qwen=ce_full --compare_extras --only_all`.
 - Final file: `python -m src.stack_submit --features extra --extra ce_large=handoff/ce_large_out --extra ce_full=handoff/ce_full_out --extra qwen=handoff/ce_qwen_frself_out --fill qwen=ce_full --pairs "handoff/full_out/oof_train_full_part*.parquet" --lgbm_test "handoff/full_out/probs_model_full_part*.parquet" --swap ce_large=handoff/ce_france_out --shift france:-1.25 --alpha 1.5 --out output/final`.
 - Unseen-country proxy: `src/proxy_eval.py`, `src/ce_dann_local.py`. Validator: `utils/validate_submission.py`.
