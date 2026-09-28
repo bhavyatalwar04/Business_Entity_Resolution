@@ -1,0 +1,43 @@
+#!/bin/bash
+#PBS -N frself
+#PBS -j oe
+#PBS -q gpu
+#PBS -l select=1:ncpus=8:ngpus=1:mem=32gb
+#PBS -l walltime=03:30:00
+# France self-training (rachit #485): continue the v11 Qwen3 adapter on 3-teacher France pseudo-labels + sibling hard
+# negatives + IN/US replay (inputs/selftrain_fr.parquet), gate it like frcanon, then rescore all France pairs if it passes.
+cd $PBS_O_WORKDIR; exec > logs/frself_${PBS_JOBID%%.*}.log 2>&1
+export OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=true HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+if [ -z "$CUDA_VISIBLE_DEVICES" ]; then
+  HOST=$(hostname -s); JOB=${PBS_JOBID%%.*}
+  exec 9>~/.gpu_claims.lock; flock 9
+  touch ~/.gpu_claims
+  while read -r h g j; do qstat "$j" >/dev/null 2>&1 && echo "$h $g $j"; done < ~/.gpu_claims > ~/.gpu_claims.new
+  mv ~/.gpu_claims.new ~/.gpu_claims
+  CLAIMED=$(awk -v h="$HOST" '$1==h{print $2}' ~/.gpu_claims | paste -sd'|')
+  BUSY_UUIDS=$(nvidia-smi --query-compute-apps=gpu_uuid --format=csv,noheader | sort -u | paste -sd'|')
+  # Shared GPUs fill up without warning: only take a GPU with >= MINFREE MiB free, waiting up to 60 min for one.
+  MINFREE=${MINFREE:-60000}
+  for try in $(seq 1 60); do
+    GPU=$(nvidia-smi --query-gpu=index,uuid,memory.used,memory.free --format=csv,noheader,nounits | tr -d ' ' |
+          awk -F, -v c="^(${CLAIMED:-none})$" -v b="${BUSY_UUIDS:-none}" -v m="$MINFREE" '$1 !~ c && $4 >= m {print (index(b,$2)>0 ? 1 : 0) "," $3 "," $1}' |
+          sort -t, -k1,1n -k2,2n | head -1 | cut -d, -f3)
+    [ -n "$GPU" ] && break
+    echo "no GPU with >= ${MINFREE} MiB free (try $try), waiting 60 s"; sleep 60
+    BUSY_UUIDS=$(nvidia-smi --query-compute-apps=gpu_uuid --format=csv,noheader | sort -u | paste -sd'|')
+  done
+  [ -z "$GPU" ] && { echo "no GPU free after 60 min, giving up"; flock -u 9; exit 3; }
+  echo "$HOST $GPU $JOB" >> ~/.gpu_claims
+  flock -u 9
+  export CUDA_VISIBLE_DEVICES=$GPU
+fi
+echo "host $(hostname -s) | using GPU $CUDA_VISIBLE_DEVICES: $(nvidia-smi -i $CUDA_VISIBLE_DEVICES --query-gpu=name,memory.used --format=csv,noheader) | job $PBS_JOBID | ncpus $NCPUS | args: $ARGS"
+PY=~/.conda/envs/minor-project/bin/python; O=$PWD/out_frself; G=$PWD/out_frself_gate; mkdir -p $G
+$PY -u qwen_dann.py --max_lambda 0 --src_file inputs/selftrain_fr.parquet --target gate_fr_50k.parquet \
+    --lr 1e-5 --bs 64 --accum 2 --out $O || { echo "training failed"; exit 1; }
+$PY -u qwen_score.py --adapter $O/adapter --pairs inputs/gate_fold0_50k.parquet --split train --stem gate_in_self --out $G
+$PY -u qwen_score.py --adapter $O/adapter --pairs inputs/gate_fr_50k.parquet --split test --stem gate_fr_self --out $G
+$PY gate_frcanon.py $G self
+[ "$(cat $G/CHOSEN)" = "self" ] || { echo "self-train failed the gate; stopping"; exit 0; }
+$PY -u qwen_score.py --adapter $O/adapter --pairs inputs/france_all.parquet --split test --stem ce_test_france --out $PWD/out_frself_scores
+echo "frself done"

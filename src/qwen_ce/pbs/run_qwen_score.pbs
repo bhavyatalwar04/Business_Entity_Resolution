@@ -1,0 +1,47 @@
+#!/bin/bash
+#PBS -N qwen_score
+#PBS -j oe
+#PBS -q gpu
+#PBS -l select=1:ncpus=8:ngpus=1:mem=24gb
+#PBS -l walltime=06:00:00
+# Score a pair list with the trained Qwen3-4B CE (no training): qsub -v ARGS="--pairs ... --stem ..." run_qwen_score.pbs
+# Needs ~15 GB GPU memory (8 GB bf16 weights + batch), so waits for a GPU with >= 30 GB free.
+
+cd $PBS_O_WORKDIR; exec > logs/qwen_score_${PBS_JOBID%%.*}.log 2>&1   # PBS -o only appears at job end
+export N_CPUS=${NCPUS:-8} OMP_NUM_THREADS=${NCPUS:-8} RAYON_NUM_THREADS=${NCPUS:-8} MKL_NUM_THREADS=${NCPUS:-8}
+export PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=true HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+
+# Wait for the Qwen adapter (written at the end of training by job 39016; tokenizer files are saved last).
+for i in $(seq 1 180); do [ -f out/adapter/tokenizer_config.json ] && [ -f out/adapter/adapter_model.safetensors ] && break; echo "waiting for out/adapter ($i)"; sleep 60; done
+[ -f out/adapter/tokenizer_config.json ] || { echo "adapter never appeared"; exit 4; }
+sleep 30
+
+# GPU pick, same procedure as the team's jobs/pick_gpu.sh: under a lock on ~/.gpu_claims, prune claims of
+# finished jobs, drop GPUs claimed on this host, then prefer a GPU with no compute process, else least memory used.
+# Claims of other users (hpc/arnav) are mirrored in the collab shared-context key "gpu-claims".
+if [ -z "$CUDA_VISIBLE_DEVICES" ]; then
+  HOST=$(hostname -s); JOB=${PBS_JOBID%%.*}
+  exec 9>~/.gpu_claims.lock; flock 9
+  touch ~/.gpu_claims
+  while read -r h g j; do qstat "$j" >/dev/null 2>&1 && echo "$h $g $j"; done < ~/.gpu_claims > ~/.gpu_claims.new
+  mv ~/.gpu_claims.new ~/.gpu_claims
+  CLAIMED=$(awk -v h="$HOST" '$1==h{print $2}' ~/.gpu_claims | paste -sd'|')
+  BUSY_UUIDS=$(nvidia-smi --query-compute-apps=gpu_uuid --format=csv,noheader | sort -u | paste -sd'|')
+  # Shared GPUs fill up without warning: only take a GPU with >= MINFREE MiB free, waiting up to 60 min for one.
+  MINFREE=${MINFREE:-30000}
+  for try in $(seq 1 60); do
+    GPU=$(nvidia-smi --query-gpu=index,uuid,memory.used,memory.free --format=csv,noheader,nounits | tr -d ' ' |
+          awk -F, -v c="^(${CLAIMED:-none})$" -v b="${BUSY_UUIDS:-none}" -v m="$MINFREE" '$1 !~ c && $4 >= m {print (index(b,$2)>0 ? 1 : 0) "," $3 "," $1}' |
+          sort -t, -k1,1n -k2,2n | head -1 | cut -d, -f3)
+    [ -n "$GPU" ] && break
+    echo "no GPU with >= ${MINFREE} MiB free (try $try), waiting 60 s"; sleep 60
+    BUSY_UUIDS=$(nvidia-smi --query-compute-apps=gpu_uuid --format=csv,noheader | sort -u | paste -sd'|')
+  done
+  [ -z "$GPU" ] && { echo "no GPU free after 60 min, giving up"; flock -u 9; exit 3; }
+  echo "$HOST $GPU $JOB" >> ~/.gpu_claims
+  flock -u 9
+  export CUDA_VISIBLE_DEVICES=$GPU
+fi
+echo "host $(hostname -s) | using GPU $CUDA_VISIBLE_DEVICES: $(nvidia-smi -i $CUDA_VISIBLE_DEVICES --query-gpu=name,memory.used --format=csv,noheader) | job $PBS_JOBID | ncpus $NCPUS | args: $ARGS"
+
+~/.conda/envs/minor-project/bin/python -u qwen_score.py $ARGS
